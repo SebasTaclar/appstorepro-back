@@ -1,0 +1,586 @@
+import { PrismaClient } from '@prisma/client';
+import {
+  MercadoPagoService,
+  CreatePaymentData,
+  PaymentCreationResult,
+} from '../../infrastructure/services/MercadoPagoService';
+import { Logger } from '../../shared/Logger';
+
+export interface CreatePurchaseRequest {
+  wallpaperNumbers: number[]; // Array de números de wallpapers
+  buyerEmail: string;
+  buyerName: string;
+  buyerIdentificationNumber: string;
+  buyerContactNumber: string; // Número de contacto/teléfono
+  amount: number; // Cantidad total en COP que viene desde el frontend
+}
+
+export interface CreatePurchaseResponse {
+  purchaseId: string;
+  paymentUrl: string;
+  preferenceId: string;
+  externalReference: string;
+  wallpaperNumbers: number[]; // Array de números de wallpapers
+  amount: number;
+  currency: string;
+}
+
+export class PurchaseService {
+  private prisma: PrismaClient;
+  private mercadoPagoService: MercadoPagoService;
+
+  constructor(prisma: PrismaClient) {
+    this.prisma = prisma;
+    this.mercadoPagoService = new MercadoPagoService();
+  }
+
+  async createPurchase(request: CreatePurchaseRequest): Promise<CreatePurchaseResponse> {
+    try {
+      Logger.info('Creating purchase', {
+        wallpaperNumbers: request.wallpaperNumbers,
+        buyerEmail: request.buyerEmail,
+      });
+
+      // Validar que haya al menos un wallpaper
+      if (!request.wallpaperNumbers || request.wallpaperNumbers.length === 0) {
+        throw new Error('At least one wallpaper number is required');
+      }
+
+      // Validar que los números de wallpaper sean válidos
+      for (const wallpaperNumber of request.wallpaperNumbers) {
+        if (wallpaperNumber <= 0 || wallpaperNumber > 5000) {
+          throw new Error(`Wallpaper number ${wallpaperNumber} must be between 1 and 5000`);
+        }
+      }
+
+      // Validar email
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(request.buyerEmail)) {
+        throw new Error('Invalid email format');
+      }
+
+      // Validar nombre
+      if (!request.buyerName || request.buyerName.trim().length < 2) {
+        throw new Error('Buyer name must be at least 2 characters long');
+      }
+
+      // Validar número de identificación (CC Colombia)
+      if (!request.buyerIdentificationNumber || request.buyerIdentificationNumber.length < 6) {
+        throw new Error('Identification number must be at least 6 characters long');
+      }
+
+      // Validar que la cantidad sea válida
+      if (!request.amount || request.amount <= 0) {
+        throw new Error('Amount must be greater than 0');
+      }
+
+      // Crear el pago en Mercado Pago
+      const paymentData: CreatePaymentData = {
+        wallpaperNumbers: request.wallpaperNumbers,
+        buyerEmail: request.buyerEmail,
+        buyerName: request.buyerName,
+        buyerIdentificationNumber: request.buyerIdentificationNumber,
+        buyerContactNumber: request.buyerContactNumber,
+        amount: request.amount,
+      };
+
+      const paymentResult: PaymentCreationResult =
+        await this.mercadoPagoService.createPayment(paymentData);
+
+      // Guardar la compra en la base de datos con wallpapers como JSON string
+      const purchase = await this.prisma.purchase.create({
+        data: {
+          wallpaperNumbers: JSON.stringify(request.wallpaperNumbers), // Guardar como JSON string
+          buyerEmail: request.buyerEmail,
+          buyerName: request.buyerName,
+          buyerIdentificationNumber: request.buyerIdentificationNumber,
+          buyerContactNumber: request.buyerContactNumber,
+          preferenceId: paymentResult.preferenceId,
+          externalReference: paymentResult.externalReference,
+          status: 'PENDING',
+          amount: request.amount, // Cantidad total que viene desde el frontend
+          currency: 'COP',
+        },
+      });
+
+      Logger.info('Purchase created successfully', {
+        purchaseId: purchase.id,
+        preferenceId: paymentResult.preferenceId,
+        wallpaperNumbers: request.wallpaperNumbers,
+      });
+
+      return {
+        purchaseId: purchase.id.toString(),
+        paymentUrl: paymentResult.paymentUrl,
+        preferenceId: paymentResult.preferenceId,
+        externalReference: paymentResult.externalReference,
+        wallpaperNumbers: request.wallpaperNumbers,
+        amount: request.amount,
+        currency: 'COP',
+      };
+    } catch (error) {
+      Logger.error('Error creating purchase', error);
+      throw error;
+    }
+  }
+
+  async updatePaymentStatus(
+    mercadopagoPaymentId: string,
+    status: string,
+    paymentData?: any
+  ): Promise<void> {
+    try {
+      Logger.info('Updating payment status', {
+        mercadopagoPaymentId,
+        status,
+        externalReference: paymentData?.externalReference,
+      });
+
+      // Primero buscar por mercadopagoPaymentId si ya está guardado
+      let purchase = await this.prisma.purchase.findFirst({
+        where: {
+          mercadopagoPaymentId: mercadopagoPaymentId,
+        },
+      });
+
+      // Si no se encuentra por paymentId, buscar por externalReference
+      if (!purchase && paymentData?.externalReference) {
+        Logger.info('Purchase not found by paymentId, searching by externalReference', {
+          externalReference: paymentData.externalReference,
+        });
+
+        purchase = await this.prisma.purchase.findFirst({
+          where: {
+            externalReference: paymentData.externalReference,
+          },
+        });
+      }
+
+      if (!purchase) {
+        Logger.warn('Purchase not found for payment', {
+          mercadopagoPaymentId,
+          externalReference: paymentData?.externalReference,
+        });
+        return;
+      }
+
+      // Actualizar el purchase con toda la información del pago
+      await this.prisma.purchase.update({
+        where: {
+          id: purchase.id,
+        },
+        data: {
+          status: status,
+          mercadopagoPaymentId: mercadopagoPaymentId,
+          updatedAt: new Date(),
+        },
+      });
+
+      Logger.info('Payment status updated successfully', {
+        purchaseId: purchase.id,
+        oldStatus: purchase.status,
+        newStatus: status,
+        mercadopagoPaymentId,
+      });
+    } catch (error) {
+      Logger.error('Error updating payment status', error);
+      throw error;
+    }
+  }
+
+  async getPurchasesByEmail(email: string): Promise<any[]> {
+    try {
+      Logger.info('Getting purchases by email', { email });
+
+      const purchases = await this.prisma.purchase.findMany({
+        where: {
+          buyerEmail: email,
+        },
+        orderBy: {
+          updatedAt: 'desc',
+        },
+      });
+
+      // Formatear la respuesta para incluir wallpaperNumbers como array
+      const formattedPurchases = purchases.map((purchase) => ({
+        id: purchase.id,
+        wallpaperNumbers: JSON.parse(purchase.wallpaperNumbers), // Parsear JSON a array
+        buyerEmail: purchase.buyerEmail,
+        buyerName: purchase.buyerName,
+        status: purchase.status,
+        amount: purchase.amount,
+        currency: purchase.currency,
+        createdAt: purchase.createdAt,
+        updatedAt: purchase.updatedAt,
+      }));
+
+      Logger.info('Purchases retrieved successfully', {
+        email,
+        count: formattedPurchases.length,
+      });
+
+      return formattedPurchases;
+    } catch (error) {
+      Logger.error('Error getting purchases by email', error);
+      throw error;
+    }
+  }
+
+  async getAllPurchases(): Promise<any[]> {
+    try {
+      Logger.info('Getting all purchases');
+
+      const purchases = await this.prisma.purchase.findMany({
+        orderBy: {
+          updatedAt: 'desc',
+        },
+      });
+
+      // Formatear la respuesta para incluir wallpaperNumbers como array
+      const formattedPurchases = purchases.map((purchase) => ({
+        id: purchase.id,
+        wallpaperNumbers: JSON.parse(purchase.wallpaperNumbers), // Parsear JSON a array
+        buyerEmail: purchase.buyerEmail,
+        buyerName: purchase.buyerName,
+        buyerContactNumber: purchase.buyerContactNumber,
+        status: purchase.status,
+        amount: purchase.amount,
+        currency: purchase.currency,
+        createdAt: purchase.createdAt,
+        updatedAt: purchase.updatedAt,
+      }));
+
+      Logger.info('All purchases retrieved successfully', {
+        count: formattedPurchases.length,
+      });
+
+      return formattedPurchases;
+    } catch (error) {
+      Logger.error('Error getting all purchases', error);
+      throw error;
+    }
+  }
+
+  async getWallpaperStatus(): Promise<{ approved: number[]; pending: number[] }> {
+    try {
+      Logger.info('Getting wallpaper status');
+
+      // Obtener todas las compras con estado APPROVED, COMPLETED o PENDING
+      const purchases = await this.prisma.purchase.findMany({
+        where: {
+          status: {
+            in: ['APPROVED', 'COMPLETED', 'PENDING'],
+          },
+        },
+        select: {
+          wallpaperNumbers: true,
+          status: true,
+        },
+      });
+
+      const approvedWallpapers = new Set<number>();
+      const pendingWallpapers = new Set<number>();
+
+      // Procesar cada compra y extraer los números de wallpapers
+      for (const purchase of purchases) {
+        const wallpaperNumbers = JSON.parse(purchase.wallpaperNumbers) as number[];
+
+        // APPROVED y COMPLETED se consideran como aprobados (no disponibles)
+        if (purchase.status === 'APPROVED' || purchase.status === 'COMPLETED') {
+          wallpaperNumbers.forEach((num) => approvedWallpapers.add(num));
+        } else if (purchase.status === 'PENDING') {
+          wallpaperNumbers.forEach((num) => pendingWallpapers.add(num));
+        }
+      }
+
+      // Convertir Sets a arrays ordenados
+      const approvedArray = Array.from(approvedWallpapers).sort((a, b) => a - b);
+      const pendingArray = Array.from(pendingWallpapers).sort((a, b) => a - b);
+
+      Logger.info('Wallpaper status retrieved successfully', {
+        approvedCount: approvedArray.length,
+        pendingCount: pendingArray.length,
+      });
+
+      return {
+        approved: approvedArray,
+        pending: pendingArray,
+      };
+    } catch (error) {
+      Logger.error('Error getting wallpaper status', error);
+      throw error;
+    }
+  }
+
+  async resendEmailForPurchase(
+    purchaseId: string,
+    logger: Logger
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      logger.logInfo('Resending email for purchase', { purchaseId });
+
+      // Buscar la compra por ID
+      const purchase = await this.prisma.purchase.findUnique({
+        where: {
+          id: parseInt(purchaseId),
+        },
+      });
+
+      if (!purchase) {
+        throw new Error('Purchase not found');
+      }
+
+      // Verificar que el pago esté aprobado o completado
+      const isSuccessfulPayment = ['APPROVED', 'COMPLETED'].includes(purchase.status.toUpperCase());
+
+      if (!isSuccessfulPayment) {
+        logger.logInfo('Purchase not approved/completed - cannot resend email', {
+          purchaseId: purchase.id,
+          status: purchase.status,
+        });
+
+        throw new Error(
+          `Cannot resend email. Purchase status is: ${purchase.status}. Only APPROVED or COMPLETED purchases can have emails resent.`
+        );
+      }
+
+      // Preparar datos del email
+      const emailData = {
+        buyerEmail: purchase.buyerEmail,
+        buyerName: purchase.buyerName,
+        buyerContactNumber: purchase.buyerContactNumber || 'No proporcionado',
+        wallpaperNumbers: JSON.parse(purchase.wallpaperNumbers),
+        amount: purchase.amount,
+        currency: purchase.currency,
+        status: purchase.status,
+        paymentId: purchase.mercadopagoPaymentId || purchase.wompiTransactionId || 'N/A',
+        purchaseDate: purchase.updatedAt,
+      };
+
+      // Usar el EmailService siguiendo el patrón correcto del proyecto
+      const { getEmailService } = await import('../../shared/serviceProvider');
+      const emailService = getEmailService(logger);
+      await emailService.sendPaymentConfirmationEmail(emailData);
+
+      logger.logInfo('Email resent successfully', {
+        purchaseId: purchase.id,
+        buyerEmail: purchase.buyerEmail,
+        status: purchase.status,
+      });
+
+      return {
+        success: true,
+        message: 'Payment confirmation email resent successfully',
+      };
+    } catch (error) {
+      logger.logError('Error resending email for purchase.', error);
+      throw error;
+    }
+  }
+
+  async updatePurchase(
+    purchaseId: string,
+    updateData: { buyerEmail?: string; buyerName?: string; buyerContactNumber?: string },
+    logger: any
+  ): Promise<{ success: boolean; message: string; updatedPurchase: any }> {
+    try {
+      logger.logInfo('Updating purchase', { purchaseId, updateData });
+
+      // Buscar la compra por ID
+      const purchase = await this.prisma.purchase.findUnique({
+        where: {
+          id: parseInt(purchaseId),
+        },
+      });
+
+      if (!purchase) {
+        throw new Error('Purchase not found');
+      }
+
+      // Validar email si se proporciona
+      if (updateData.buyerEmail) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(updateData.buyerEmail)) {
+          throw new Error('Invalid email format');
+        }
+      }
+
+      // Validar nombre si se proporciona
+      if (updateData.buyerName && updateData.buyerName.trim().length < 2) {
+        throw new Error('Buyer name must be at least 2 characters long');
+      }
+
+      // Preparar datos para actualización (solo campos que se proporcionaron)
+      const dataToUpdate: any = {
+        updatedAt: new Date(),
+      };
+
+      if (updateData.buyerEmail) {
+        dataToUpdate.buyerEmail = updateData.buyerEmail;
+      }
+
+      if (updateData.buyerName) {
+        dataToUpdate.buyerName = updateData.buyerName.trim();
+      }
+
+      if (updateData.buyerContactNumber) {
+        dataToUpdate.buyerContactNumber = updateData.buyerContactNumber;
+      }
+
+      // Actualizar la compra
+      const updatedPurchase = await this.prisma.purchase.update({
+        where: {
+          id: purchase.id,
+        },
+        data: dataToUpdate,
+      });
+
+      logger.logInfo('Purchase updated successfully', {
+        purchaseId: updatedPurchase.id,
+        updatedFields: Object.keys(updateData),
+        oldEmail: purchase.buyerEmail,
+        newEmail: updatedPurchase.buyerEmail,
+      });
+
+      // Formatear la respuesta
+      const formattedPurchase = {
+        id: updatedPurchase.id,
+        wallpaperNumbers: JSON.parse(updatedPurchase.wallpaperNumbers),
+        buyerEmail: updatedPurchase.buyerEmail,
+        buyerName: updatedPurchase.buyerName,
+        buyerContactNumber: updatedPurchase.buyerContactNumber,
+        status: updatedPurchase.status,
+        amount: updatedPurchase.amount,
+        currency: updatedPurchase.currency,
+        createdAt: updatedPurchase.createdAt,
+        updatedAt: updatedPurchase.updatedAt,
+      };
+
+      return {
+        success: true,
+        message: 'Purchase updated successfully',
+        updatedPurchase: formattedPurchase,
+      };
+    } catch (error) {
+      logger.logError('Error updating purchase', error);
+      throw error;
+    }
+  }
+
+  async generateBackupData(logger: any): Promise<{
+    statistics: {
+      totalPurchases: number;
+      approvedCount: number;
+      completedCount: number;
+      pendingCount: number;
+      cancelledCount: number;
+      rejectedCount: number;
+      failedCount: number;
+      totalRevenue: number;
+      uniqueWallpapersSold: number;
+    };
+    allPurchases: any[];
+    generatedAt: string;
+  }> {
+    try {
+      logger.logInfo('Generating backup data');
+
+      // Obtener todas las compras
+      const purchases = await this.prisma.purchase.findMany({
+        orderBy: {
+          createdAt: 'desc',
+        },
+      });
+
+      // Calcular estadísticas
+      const statistics = {
+        totalPurchases: purchases.length,
+        approvedCount: 0,
+        completedCount: 0,
+        pendingCount: 0,
+        cancelledCount: 0,
+        rejectedCount: 0,
+        failedCount: 0,
+        totalRevenue: 0,
+        uniqueWallpapersSold: 0,
+      };
+
+      const soldWallpapers = new Set<number>();
+
+      // Procesar cada compra
+      for (const purchase of purchases) {
+        const status = purchase.status.toUpperCase();
+
+        // Contar por estado
+        switch (status) {
+          case 'APPROVED':
+            statistics.approvedCount++;
+            statistics.totalRevenue += purchase.amount;
+            // Agregar wallpapers vendidos
+            const wallpapers = JSON.parse(purchase.wallpaperNumbers) as number[];
+            wallpapers.forEach((num) => soldWallpapers.add(num));
+            break;
+          case 'COMPLETED':
+            statistics.completedCount++;
+            statistics.totalRevenue += purchase.amount;
+            // Agregar wallpapers vendidos
+            const completedWallpapers = JSON.parse(purchase.wallpaperNumbers) as number[];
+            completedWallpapers.forEach((num) => soldWallpapers.add(num));
+            break;
+          case 'PENDING':
+            statistics.pendingCount++;
+            break;
+          case 'CANCELLED':
+            statistics.cancelledCount++;
+            break;
+          case 'REJECTED':
+            statistics.rejectedCount++;
+            break;
+          case 'FAILED':
+            statistics.failedCount++;
+            break;
+        }
+      }
+
+      statistics.uniqueWallpapersSold = soldWallpapers.size;
+
+      // Formatear las compras para el backup
+      const formattedPurchases = purchases.map((purchase) => ({
+        id: purchase.id,
+        wallpaperNumbers: JSON.parse(purchase.wallpaperNumbers),
+        buyerEmail: purchase.buyerEmail,
+        buyerName: purchase.buyerName,
+        buyerIdentificationNumber: purchase.buyerIdentificationNumber,
+        buyerContactNumber: purchase.buyerContactNumber,
+        mercadopagoPaymentId: purchase.mercadopagoPaymentId,
+        wompiTransactionId: purchase.wompiTransactionId,
+        preferenceId: purchase.preferenceId,
+        externalReference: purchase.externalReference,
+        status: purchase.status,
+        amount: purchase.amount,
+        currency: purchase.currency,
+        paymentProvider: purchase.paymentProvider,
+        createdAt: purchase.createdAt,
+        updatedAt: purchase.updatedAt,
+      }));
+
+      const backupData = {
+        statistics,
+        allPurchases: formattedPurchases,
+        generatedAt: new Date().toISOString(),
+      };
+
+      logger.logInfo('Backup data generated successfully', {
+        totalPurchases: statistics.totalPurchases,
+        approvedCount: statistics.approvedCount,
+        completedCount: statistics.completedCount,
+        totalRevenue: statistics.totalRevenue,
+      });
+
+      return backupData;
+    } catch (error) {
+      logger.logError('Error generating backup data', error);
+      throw error;
+    }
+  }
+}

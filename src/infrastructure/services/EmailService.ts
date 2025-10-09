@@ -1,0 +1,1048 @@
+import { EmailClient } from '@azure/communication-email';
+import { Logger } from '../../shared/Logger';
+import { getPurchaseService } from '../../shared/serviceProvider';
+import * as https from 'https';
+import * as http from 'http';
+import * as sharp from 'sharp';
+
+export interface EmailData {
+  toEmail: string;
+  toName: string;
+  subject: string;
+  htmlContent: string;
+  textContent?: string;
+  attachments?: EmailAttachment[];
+}
+
+export interface EmailAttachment {
+  name: string;
+  contentType: string;
+  contentInBase64: string;
+}
+
+export interface PaymentEmailData {
+  buyerEmail: string;
+  buyerName: string;
+  buyerContactNumber: string;
+  wallpaperNumbers: number[];
+  amount: number;
+  currency: string;
+  status: string;
+  paymentId: string;
+  purchaseDate: Date;
+}
+
+export interface PaymentWebhookData {
+  id: string;
+  status: string;
+  externalReference?: string;
+  transactionAmount?: number;
+  paymentMethodId?: string;
+  dateApproved?: string;
+  dateCreated?: string;
+}
+
+export class EmailService {
+  private emailClient: EmailClient;
+  private logger: Logger;
+  private senderEmail: string;
+
+  constructor(logger: Logger) {
+    this.logger = logger;
+
+    const connectionString = process.env.AZURE_COMMUNICATION_CONNECTION_STRING;
+    const senderEmail = process.env.AZURE_COMMUNICATION_SENDER_EMAIL;
+
+    if (!connectionString) {
+      throw new Error('AZURE_COMMUNICATION_CONNECTION_STRING environment variable is required');
+    }
+
+    if (!senderEmail) {
+      throw new Error('AZURE_COMMUNICATION_SENDER_EMAIL environment variable is required');
+    }
+
+    this.senderEmail = senderEmail;
+    this.emailClient = new EmailClient(connectionString);
+  }
+
+  async sendEmail(emailData: EmailData): Promise<void> {
+    try {
+      this.logger.logInfo('Sending email', {
+        toEmail: emailData.toEmail,
+        subject: emailData.subject,
+        attachmentCount: emailData.attachments?.length || 0,
+      });
+
+      const message: any = {
+        senderAddress: this.senderEmail,
+        content: {
+          subject: emailData.subject,
+          html: emailData.htmlContent,
+          plainText: emailData.textContent || this.stripHtml(emailData.htmlContent),
+        },
+        recipients: {
+          to: [
+            {
+              address: emailData.toEmail,
+              displayName: emailData.toName,
+            },
+          ],
+        },
+      };
+
+      // Agregar attachments si existen
+      if (emailData.attachments && emailData.attachments.length > 0) {
+        message.attachments = emailData.attachments.map((attachment) => ({
+          name: attachment.name,
+          contentType: attachment.contentType,
+          contentInBase64: attachment.contentInBase64,
+        }));
+      }
+
+      const poller = await this.emailClient.beginSend(message);
+      const result = await poller.pollUntilDone();
+
+      this.logger.logInfo('Email sent successfully', {
+        toEmail: emailData.toEmail,
+        messageId: result.id,
+        status: result.status,
+        attachmentCount: emailData.attachments?.length || 0,
+      });
+    } catch (error) {
+      this.logger.logError('Error sending email', {
+        toEmail: emailData.toEmail,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      throw error;
+    }
+  }
+
+  async sendPaymentConfirmationEmail(paymentData: PaymentEmailData): Promise<void> {
+    try {
+      this.logger.logInfo('Sending payment confirmation email', {
+        buyerEmail: paymentData.buyerEmail,
+        status: paymentData.status,
+        wallpaperNumbers: paymentData.wallpaperNumbers,
+      });
+
+      // Solo generar wallpaper si el pago está aprobado o completado
+      let attachments: EmailAttachment[] = [];
+      let uniqueColor = '#667eea'; // Color por defecto
+      let attachmentName = '';
+
+      const isSuccessfulPayment = ['APPROVED', 'COMPLETED'].includes(
+        paymentData.status.toUpperCase()
+      );
+
+      if (isSuccessfulPayment) {
+        this.logger.logInfo('Payment approved/completed - generating wallpaper attachment', {
+          buyerEmail: paymentData.buyerEmail,
+          status: paymentData.status,
+        });
+
+        // Generar attachment de wallpaper personalizado con color único
+        uniqueColor = this.generateUniqueColor(paymentData.wallpaperNumbers);
+        const imageAttachment = await this.generateWallpaperAttachment(
+          uniqueColor,
+          paymentData.wallpaperNumbers
+        );
+        attachments = [imageAttachment];
+        attachmentName = imageAttachment.name;
+      } else {
+        this.logger.logInfo(
+          'Payment not approved/completed - sending notification without wallpaper',
+          {
+            buyerEmail: paymentData.buyerEmail,
+            status: paymentData.status,
+          }
+        );
+        uniqueColor = this.generateUniqueColor(paymentData.wallpaperNumbers);
+      }
+
+      const emailData: EmailData = {
+        toEmail: paymentData.buyerEmail,
+        toName: paymentData.buyerName,
+        subject: this.getEmailSubject(paymentData.status),
+        htmlContent: this.generatePaymentEmailTemplate(paymentData, uniqueColor, attachmentName),
+        attachments: attachments,
+      };
+
+      await this.sendEmail(emailData);
+
+      this.logger.logInfo('Payment confirmation email sent successfully', {
+        buyerEmail: paymentData.buyerEmail,
+        status: paymentData.status,
+        hasWallpaper: isSuccessfulPayment,
+      });
+    } catch (error) {
+      this.logger.logError('Error sending payment confirmation email', error);
+      throw error;
+    }
+  }
+
+  async sendPaymentNotificationFromWebhook(
+    paymentWebhookData: PaymentWebhookData,
+    mappedStatus: string
+  ): Promise<void> {
+    try {
+      this.logger.logInfo('Processing payment notification from webhook', {
+        paymentId: paymentWebhookData.id,
+        status: mappedStatus,
+        externalReference: paymentWebhookData.externalReference,
+      });
+
+      // Obtener los datos de la compra desde la base de datos
+      const purchaseService = getPurchaseService();
+
+      // Buscar la compra por payment ID o external reference
+      const purchases = await purchaseService.getAllPurchases();
+      const purchase = purchases.find(
+        (p) =>
+          p.mercadopagoPaymentId === paymentWebhookData.id ||
+          (paymentWebhookData.externalReference &&
+            paymentWebhookData.externalReference.includes(p.wallpaperNumbers.join('-')))
+      );
+
+      if (!purchase) {
+        this.logger.logWarning('Purchase not found for payment notification email', {
+          paymentId: paymentWebhookData.id,
+          externalReference: paymentWebhookData.externalReference,
+        });
+        return;
+      }
+
+      // Preparar los datos del email
+      const emailData: PaymentEmailData = {
+        buyerEmail: purchase.buyerEmail,
+        buyerName: purchase.buyerName,
+        buyerContactNumber: purchase.buyerContactNumber || 'No proporcionado',
+        wallpaperNumbers: purchase.wallpaperNumbers,
+        amount: purchase.amount,
+        currency: purchase.currency,
+        status: mappedStatus,
+        paymentId: paymentWebhookData.id,
+        purchaseDate: new Date(purchase.createdAt),
+      };
+
+      // Enviar el email de confirmación
+      await this.sendPaymentConfirmationEmail(emailData);
+
+      this.logger.logInfo('Payment notification email sent successfully from webhook', {
+        buyerEmail: purchase.buyerEmail,
+        status: mappedStatus,
+        wallpaperNumbers: purchase.wallpaperNumbers,
+      });
+    } catch (error) {
+      this.logger.logError('Error in sendPaymentNotificationFromWebhook', error);
+      throw error;
+    }
+  }
+
+  private getEmailSubject(status: string): string {
+    switch (status.toUpperCase()) {
+      case 'APPROVED':
+      case 'COMPLETED':
+        return '🎉 ¡Tu pago ha sido aprobado! - Wallpapers Digitales';
+      case 'REJECTED':
+        return '❌ Problema con tu pago - Wallpapers Digitales';
+      case 'CANCELLED':
+        return '⚠️ Pago cancelado - Wallpapers Digitales';
+      case 'PENDING':
+        return '⏳ Tu pago está siendo procesado - Wallpapers Digitales';
+      default:
+        return '📧 Actualización de tu compra - Wallpapers Digitales';
+    }
+  }
+
+  private generatePaymentEmailTemplate(
+    data: PaymentEmailData,
+    uniqueColor: string,
+    attachmentName: string
+  ): string {
+    const statusIcon = this.getStatusIcon(data.status);
+    const statusMessage = this.getStatusMessage(data.status);
+    const wallpapersList = data.wallpaperNumbers.map((num) => `#${num}`).join(', ');
+
+    const formattedAmount = new Intl.NumberFormat('es-CO', {
+      style: 'currency',
+      currency: data.currency,
+    }).format(data.amount);
+
+    const formattedDate = data.purchaseDate.toLocaleDateString('es-CO', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    // Mostrar sección de wallpaper según el estado del pago
+    let wallpaperSection = '';
+
+    if (data.status.toUpperCase() === 'APPROVED' || data.status.toUpperCase() === 'COMPLETED') {
+      wallpaperSection = `
+                <div class="moto-preview">
+                    <div class="preview-title">🎨 Wallpaper personalizado adjunto</div>
+                    <p style="color: #666; margin-bottom: 15px;">Wallpaper único generado para: ${wallpapersList}</p>
+                    <div style="background: ${uniqueColor}; padding: 20px; border-radius: 10px; margin: 15px 0;">
+                        <p style="color: white; text-align: center; font-weight: bold; margin: 0;">
+                            📎 ${attachmentName}
+                        </p>
+                        <p style="color: rgba(255,255,255,0.9); text-align: center; font-size: 14px; margin: 5px 0 0 0;">
+                            Tu wallpaper personalizado está adjunto a este email
+                        </p>
+                    </div>
+                    <p style="color: #888; font-size: 12px; margin-top: 10px;">
+                        *Descarga el archivo adjunto para ver tu wallpaper personalizado en alta resolución.
+                    </p>
+                </div>`;
+    } else if (data.status.toUpperCase() === 'CANCELLED') {
+      wallpaperSection = `
+                <div class="moto-preview">
+                    <div class="preview-title">⚠️ Wallpapers cancelados</div>
+                    <p style="color: #666; margin-bottom: 15px;">Tu compra fue cancelada y los wallpapers no serán enviados.</p>
+                    <div style="background: #f3f3f4; padding: 20px; border-radius: 10px; margin: 15px 0;">
+                        <p style="color: #383d41; text-align: center; font-weight: bold; margin: 0;">
+                            Pago cancelado
+                        </p>
+                        <p style="color: #383d41; text-align: center; font-size: 14px; margin: 5px 0 0 0;">
+                            Si fue un error, puedes intentar la compra nuevamente.
+                        </p>
+                    </div>
+                    <p style="color: #888; font-size: 12px; margin-top: 10px;">
+                        *No se enviarán wallpapers digitales para compras canceladas.
+                    </p>
+                </div>`;
+    } else if (data.status.toUpperCase() === 'REJECTED') {
+      wallpaperSection = `
+                <div class="moto-preview">
+                    <div class="preview-title">❌ Pago rechazado</div>
+                    <p style="color: #666; margin-bottom: 15px;">Tu pago fue rechazado y los wallpapers no fueron enviados.</p>
+                    <div style="background: #f8d7da; padding: 20px; border-radius: 10px; margin: 15px 0;">
+                        <p style="color: #721c24; text-align: center; font-weight: bold; margin: 0;">
+                            ❌ Pago no procesado
+                        </p>
+                        <p style="color: #721c24; text-align: center; font-size: 14px; margin: 5px 0 0 0;">
+                            Verifica tu método de pago e intenta nuevamente
+                        </p>
+                    </div>
+                    <p style="color: #888; font-size: 12px; margin-top: 10px;">
+                        *Puedes intentar realizar la compra nuevamente con otro método de pago.
+                    </p>
+                </div>`;
+    } else {
+      // Solo para PENDING
+      wallpaperSection = `
+                <div class="moto-preview">
+                    <div class="preview-title">📱 Wallpapers reservados</div>
+                    <p style="color: #666; margin-bottom: 15px;">Wallpapers reservados para: ${wallpapersList}</p>
+                    <div style="background: ${uniqueColor}; padding: 20px; border-radius: 10px; margin: 15px 0;">
+                        <p style="color: white; text-align: center; font-weight: bold; margin: 0;">
+                            ⏳ Esperando confirmación de pago
+                        </p>
+                        <p style="color: rgba(255,255,255,0.9); text-align: center; font-size: 14px; margin: 5px 0 0 0;">
+                            Los wallpapers se enviarán una vez que se confirme el pago
+                        </p>
+                    </div>
+                    <p style="color: #888; font-size: 12px; margin-top: 10px;">
+                        *Tu color único ya está reservado: ${uniqueColor}
+                    </p>
+                </div>`;
+    }
+
+    return `
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Confirmación de Pago</title>
+        <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+            .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+            .status-approved { color: #28a745; font-weight: bold; }
+            .status-rejected { color: #dc3545; font-weight: bold; }
+            .status-pending { color: #ffc107; font-weight: bold; }
+            .status-cancelled { color: #6c757d; font-weight: bold; }
+            .wallpaper-list { background: white; padding: 15px; margin: 15px 0; border-radius: 5px; border-left: 4px solid #667eea; }
+            .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
+            .highlight { background: #e7f3ff; padding: 10px; border-radius: 5px; margin: 10px 0; }
+            .moto-preview { text-align: center; margin: 20px 0; padding: 20px; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            .moto-preview img { max-width: 100%; height: auto; border-radius: 8px; }
+            .preview-title { color: #667eea; font-size: 18px; font-weight: bold; margin-bottom: 10px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>${statusIcon} Wallpapers Digitales</h1>
+                <p>Confirmación de tu compra</p>
+            </div>
+            
+            <div class="content">
+                <h2>¡Hola ${data.buyerName}!</h2>
+                
+                <div class="highlight">
+                    <h3 class="status-${data.status.toLowerCase()}">${statusMessage}</h3>
+                </div>
+
+                ${wallpaperSection}
+
+                <div class="wallpaper-list">
+                    <h4>📱 Detalles de tu compra:</h4>
+                    <ul>
+                        <li><strong>Wallpapers:</strong> ${wallpapersList}</li>
+                        <li><strong>Cantidad:</strong> ${data.wallpaperNumbers.length} wallpaper${data.wallpaperNumbers.length !== 1 ? 's' : ''}</li>
+                        <li><strong>Monto:</strong> ${formattedAmount}</li>
+                        <li><strong>Estado:</strong> <span class="status-${data.status.toLowerCase()}">${data.status}</span></li>
+                        <li><strong>ID de Pago:</strong> ${data.paymentId}</li>
+                        <li><strong>Fecha:</strong> ${formattedDate}</li>
+                        <li><strong>Contacto:</strong> ${data.buyerContactNumber}</li>
+                        <li><strong>Color único:</strong> <span style="background: ${uniqueColor}; color: white; padding: 2px 8px; border-radius: 3px;">${uniqueColor}</span></li>
+                    </ul>
+                </div>
+                
+                ${this.getStatusSpecificContent(data.status)}
+                
+                <div class="footer">
+                    <p>Si tienes alguna pregunta, no dudes en contactarnos.</p>
+                    <p><strong>Wallpapers Digitales</strong> - Tu tienda de wallpapers premium</p>
+                    <p style="font-size: 12px; color: #999;">
+                        Este es un email automático, por favor no respondas a este mensaje.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    `;
+  }
+
+  private getStatusIcon(status: string): string {
+    switch (status.toUpperCase()) {
+      case 'APPROVED':
+      case 'COMPLETED':
+        return '🎉';
+      case 'REJECTED':
+        return '❌';
+      case 'CANCELLED':
+        return '⚠️';
+      case 'PENDING':
+        return '⏳';
+      default:
+        return '📧';
+    }
+  }
+
+  private getStatusMessage(status: string): string {
+    switch (status.toUpperCase()) {
+      case 'APPROVED':
+      case 'COMPLETED':
+        return 'Tu pago ha sido aprobado exitosamente';
+      case 'REJECTED':
+        return 'Tu pago no pudo ser procesado';
+      case 'CANCELLED':
+        return 'Tu pago ha sido cancelado';
+      case 'PENDING':
+        return 'Tu pago está siendo procesado';
+      default:
+        return 'Actualización del estado de tu pago';
+    }
+  }
+
+  private getStatusSpecificContent(status: string): string {
+    switch (status.toUpperCase()) {
+      case 'APPROVED':
+      case 'COMPLETED':
+        return `
+        <div style="background: #d4edda; color: #155724; padding: 15px; border-radius: 5px; margin: 15px 0;">
+            <h4>🎉 ¡Felicitaciones!</h4>
+            <p>Tu compra ha sido confirmada. Ya puedes descargar tus wallpapers digitales.</p>
+            <p><strong>¿Qué sigue?</strong></p>
+            <ul>
+                <li>Revisa tu cuenta para acceder a las descargas</li>
+                <li>Los wallpapers están disponibles en alta resolución</li>
+                <li>Puedes descargarlos las veces que necesites</li>
+            </ul>
+        </div>
+        `;
+      case 'REJECTED':
+        return `
+        <div style="background: #f8d7da; color: #721c24; padding: 15px; border-radius: 5px; margin: 15px 0;">
+            <h4>❌ Pago no procesado</h4>
+            <p>Lamentablemente tu pago no pudo ser procesado. Esto puede deberse a:</p>
+            <ul>
+                <li>Fondos insuficientes</li>
+                <li>Problemas con la tarjeta</li>
+                <li>Restricciones del banco</li>
+            </ul>
+            <p><strong>¿Qué puedes hacer?</strong></p>
+            <ul>
+                <li>Verifica los datos de tu tarjeta</li>
+                <li>Contacta a tu banco</li>
+                <li>Intenta con otro método de pago</li>
+            </ul>
+        </div>
+        `;
+      case 'CANCELLED':
+        return `
+        <div style="background: #f3f3f4; color: #383d41; padding: 15px; border-radius: 5px; margin: 15px 0;">
+            <h4>⚠️ Pago cancelado</h4>
+            <p>Tu pago ha sido cancelado. Si no fue intencional, puedes:</p>
+            <ul>
+                <li>Intentar realizar la compra nuevamente</li>
+                <li>Contactarnos para obtener ayuda</li>
+            </ul>
+        </div>
+        `;
+      case 'PENDING':
+        return `
+        <div style="background: #fff3cd; color: #856404; padding: 15px; border-radius: 5px; margin: 15px 0;">
+            <h4>⏳ Procesando pago</h4>
+            <p>Tu pago está siendo procesado. Te notificaremos cuando se complete.</p>
+            <p>Esto puede tomar algunos minutos. Los wallpapers estarán disponibles una vez que se confirme el pago.</p>
+        </div>
+        `;
+      default:
+        return '';
+    }
+  }
+
+  private stripHtml(html: string): string {
+    return html
+      .replace(/<[^>]*>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private generateUniqueColor(wallpaperNumbers: number[]): string {
+    // Crear un hash único basado en los números de wallpapers
+    const numbersString = wallpaperNumbers.sort((a, b) => a - b).join('');
+    let hash = 0;
+
+    for (let i = 0; i < numbersString.length; i++) {
+      const char = numbersString.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+
+    // Usar diferentes algoritmos para generar colores únicos y vibrantes
+    const algorithm = Math.abs(hash) % 4;
+
+    switch (algorithm) {
+      case 0:
+        return this.generateHSLColor(hash);
+      case 1:
+        return this.generateGradientColor(hash);
+      case 2:
+        return this.generateVibrantColor(hash);
+      default:
+        return this.generateCustomColor(hash);
+    }
+  }
+
+  private generateHSLColor(hash: number): string {
+    // Generar un color HSL vibrante y único
+    const hue = Math.abs(hash) % 360;
+    const saturation = 65 + (Math.abs(hash * 7) % 30); // 65-95%
+    const lightness = 45 + (Math.abs(hash * 11) % 20); // 45-65%
+
+    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+  }
+
+  private generateGradientColor(hash: number): string {
+    // Generar un color RGB vibrante
+    const r = 80 + (Math.abs(hash * 3) % 150);
+    const g = 80 + (Math.abs(hash * 7) % 150);
+    const b = 80 + (Math.abs(hash * 13) % 150);
+
+    return `rgb(${r}, ${g}, ${b})`;
+  }
+
+  private generateVibrantColor(hash: number): string {
+    // Paleta de colores vibrantes predefinidos con variaciones
+    const baseColors = [
+      [255, 59, 92], // Rosa vibrante
+      [255, 159, 26], // Naranja
+      [50, 215, 75], // Verde
+      [0, 122, 255], // Azul
+      [175, 82, 222], // Púrpura
+      [255, 204, 0], // Amarillo
+      [255, 45, 85], // Rojo coral
+      [30, 175, 240], // Azul cielo
+      [255, 105, 180], // Rosa intenso
+      [138, 43, 226], // Violeta
+    ];
+
+    const colorIndex = Math.abs(hash) % baseColors.length;
+    const [r, g, b] = baseColors[colorIndex];
+
+    // Agregar variación aleatoria basada en el hash
+    const variation = 30;
+    const newR = Math.max(0, Math.min(255, r + ((hash % variation) - variation / 2)));
+    const newG = Math.max(0, Math.min(255, g + (((hash * 3) % variation) - variation / 2)));
+    const newB = Math.max(0, Math.min(255, b + (((hash * 7) % variation) - variation / 2)));
+
+    return `rgb(${Math.round(newR)}, ${Math.round(newG)}, ${Math.round(newB)})`;
+  }
+
+  private generateCustomColor(hash: number): string {
+    // Algoritmo personalizado para colores muy únicos
+    const seed1 = Math.abs(hash * 17) % 1000;
+    const seed2 = Math.abs(hash * 23) % 1000;
+    const seed3 = Math.abs(hash * 37) % 1000;
+
+    const r = 100 + (seed1 % 155);
+    const g = 100 + (seed2 % 155);
+    const b = 100 + (seed3 % 155);
+
+    return `rgb(${r}, ${g}, ${b})`;
+  }
+
+  private async downloadImageAsBase64(url: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      try {
+        this.logger.logInfo('Downloading image from URL', { url });
+
+        const protocol = url.startsWith('https') ? https : http;
+
+        protocol
+          .get(url, (response) => {
+            if (response.statusCode !== 200) {
+              this.logger.logWarning('Failed to download image', {
+                url,
+                statusCode: response.statusCode,
+              });
+              resolve(null);
+              return;
+            }
+
+            const chunks: Buffer[] = [];
+
+            response.on('data', (chunk) => {
+              chunks.push(chunk);
+            });
+
+            response.on('end', () => {
+              try {
+                const buffer = Buffer.concat(chunks);
+                const base64 = buffer.toString('base64');
+
+                this.logger.logInfo('Image downloaded successfully', {
+                  url,
+                  sizeKB: Math.round(buffer.length / 1024),
+                });
+
+                resolve(base64);
+              } catch (error) {
+                this.logger.logError('Error processing downloaded image', { url, error });
+                resolve(null);
+              }
+            });
+
+            response.on('error', (error) => {
+              this.logger.logError('Error downloading image', { url, error });
+              resolve(null);
+            });
+          })
+          .on('error', (error) => {
+            this.logger.logError('Request error downloading image', { url, error });
+            resolve(null);
+          });
+      } catch (error) {
+        this.logger.logError('Unexpected error downloading image', { url, error });
+        resolve(null);
+      }
+    });
+  }
+
+  private async downloadImageAsBuffer(url: string): Promise<Buffer | null> {
+    return new Promise<Buffer | null>((resolve) => {
+      try {
+        const client = url.startsWith('https:') ? https : http;
+
+        client
+          .get(url, (response) => {
+            const chunks: Buffer[] = [];
+
+            response.on('data', (chunk: Buffer) => {
+              chunks.push(chunk);
+            });
+
+            response.on('end', () => {
+              try {
+                const buffer = Buffer.concat(chunks);
+                this.logger.logInfo('Image downloaded successfully as buffer', {
+                  url,
+                  sizeKB: Math.round(buffer.length / 1024),
+                });
+                resolve(buffer);
+              } catch (error) {
+                this.logger.logError('Error processing downloaded image buffer', { url, error });
+                resolve(null);
+              }
+            });
+
+            response.on('error', (error) => {
+              this.logger.logError('Error downloading image as buffer', { url, error });
+              resolve(null);
+            });
+          })
+          .on('error', (error) => {
+            this.logger.logError('Request error downloading image as buffer', { url, error });
+            resolve(null);
+          });
+      } catch (error) {
+        this.logger.logError('Unexpected error downloading image as buffer', { url, error });
+        resolve(null);
+      }
+    });
+  }
+
+  private async generateWallpaperAttachment(
+    backgroundColor: string,
+    wallpaperNumbers: number[]
+  ): Promise<EmailAttachment> {
+    try {
+      this.logger.logInfo('Generating wallpaper image with Sharp', {
+        backgroundColor,
+        wallpaperNumbers,
+        count: wallpaperNumbers.length,
+      });
+
+      const width = 1080;
+      const height = 1920;
+
+      // URL de la imagen de moto en Azure Blob Storage
+      const imageUrl =
+        'https://ed90mas1files.blob.core.windows.net/moto/Screenshot%202025-08-13%20131752.png';
+
+      // Crear el fondo con gradiente igual al SVG original
+      const backgroundSvg = `
+        <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <!-- Gradiente del color único (igual al SVG original) -->
+            <linearGradient id="unique-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style="stop-color:${backgroundColor};stop-opacity:1" />
+              <stop offset="100%" style="stop-color:${this.darkenColor(backgroundColor, 20)};stop-opacity:1" />
+            </linearGradient>
+            
+            <!-- Gradiente para el círculo central (igual al SVG original) -->
+            <radialGradient id="center-circle" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" style="stop-color:rgba(255,255,255,0.3);stop-opacity:1" />
+              <stop offset="100%" style="stop-color:rgba(255,255,255,0.1);stop-opacity:1" />
+            </radialGradient>
+          </defs>
+          
+          <!-- Fondo con el color único -->
+          <rect width="1080" height="1920" fill="url(#unique-bg)"/>
+          
+          <!-- Recuadro/marco decorativo principal -->
+          <rect x="60" y="60" width="960" height="1800" 
+                fill="none" 
+                stroke="rgba(255,255,255,0.3)" 
+                stroke-width="6" 
+                rx="30"/>
+                
+          <!-- Marco interno -->
+          <rect x="120" y="120" width="840" height="1680" 
+                fill="none" 
+                stroke="rgba(255,255,255,0.2)" 
+                stroke-width="2" 
+                rx="20"/>
+          
+          <!-- Círculo central decorativo (IMPORTANTE: este es el círculo grande que faltaba) -->
+          <circle cx="540" cy="760" r="250" 
+                  fill="url(#center-circle)" 
+                  stroke="rgba(255,255,255,0.4)" 
+                  stroke-width="3"/>
+        </svg>
+      `;
+
+      // Convertir SVG del fondo a buffer
+      const backgroundBuffer = await sharp(Buffer.from(backgroundSvg)).png().toBuffer();
+
+      // Comenzar con el fondo
+      let wallpaperImage = sharp(backgroundBuffer);
+
+      // Array para las imágenes que vamos a componer
+      const compositeImages: any[] = [];
+
+      // Intentar descargar y añadir la imagen de moto (centrada en el círculo)
+      try {
+        const motoImageBuffer = await this.downloadImageAsBuffer(imageUrl);
+        if (motoImageBuffer) {
+          // Redimensionar la imagen de moto conservando proporciones
+          const motoSize = 480; // Tamaño máximo manteniendo proporciones
+          const resizedMotoImage = await sharp(motoImageBuffer)
+            .resize(motoSize, motoSize, {
+              fit: 'inside', // Conservar proporciones naturales
+              withoutEnlargement: false,
+            })
+            .toBuffer();
+
+          // El SVG tiene el círculo en cx="540" cy="760"
+          // Ajustar posición horizontal hacia la derecha
+          const circleX = 540;
+          const circleY = 760;
+          const imageLeft = circleX - motoSize / 2 + 55; // Mover 70px hacia la derecha
+          const imageTop = circleY - motoSize / 2; // Centrado verticalmente
+
+          this.logger.logInfo('Positioning moto image', {
+            circleCenter: `(${circleX}, ${circleY})`,
+            imageSize: motoSize,
+            calculatedPosition: `(${imageLeft}, ${imageTop})`,
+            adjustment: 'Moved 30px right',
+            imageLeft,
+            imageTop,
+          });
+
+          compositeImages.push({
+            input: resizedMotoImage,
+            top: imageTop,
+            left: imageLeft,
+          });
+
+          this.logger.logInfo('Moto image added to wallpaper', {
+            originalSize: Math.round(motoImageBuffer.length / 1024),
+            resizedSize: Math.round(resizedMotoImage.length / 1024),
+          });
+        }
+      } catch (error) {
+        this.logger.logWarning('Could not add moto image to wallpaper', { error });
+      }
+
+      // Crear overlay de texto (igual al SVG original)
+      const textOverlay = await this.createTextOverlay(
+        wallpaperNumbers,
+        backgroundColor,
+        width,
+        height
+      );
+      if (textOverlay) {
+        compositeImages.push({
+          input: textOverlay,
+          top: 0,
+          left: 0,
+        });
+      }
+
+      // Componer todas las imágenes
+      if (compositeImages.length > 0) {
+        wallpaperImage = wallpaperImage.composite(compositeImages);
+      }
+
+      // Convertir a JPG con calidad alta
+      const finalImageBuffer = await wallpaperImage
+        .jpeg({ quality: 90, progressive: true })
+        .toBuffer();
+
+      this.logger.logInfo('Wallpaper image generated successfully', {
+        wallpaperNumbers,
+        hasMotoImage: compositeImages.some((comp) => comp.top === 460),
+        finalSizeKB: Math.round(finalImageBuffer.length / 1024),
+      });
+
+      return {
+        name: `wallpaper_${wallpaperNumbers.join('-')}_${Date.now()}.jpg`,
+        contentType: 'image/jpeg',
+        contentInBase64: finalImageBuffer.toString('base64'),
+      };
+    } catch (error) {
+      this.logger.logError('Error creating wallpaper image attachment', error);
+      throw new Error(
+        `Failed to create wallpaper image: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+    // Remover el # si está presente
+    hex = hex.replace(/^#/, '');
+
+    // Manejar formatos de color cortos (#RGB -> #RRGGBB)
+    if (hex.length === 3) {
+      hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+    }
+
+    const result = /^([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result
+      ? {
+          r: parseInt(result[1], 16),
+          g: parseInt(result[2], 16),
+          b: parseInt(result[3], 16),
+        }
+      : null;
+  }
+
+  private async createTextOverlay(
+    wallpaperNumbers: number[],
+    backgroundColor: string,
+    width: number,
+    height: number
+  ): Promise<Buffer | null> {
+    try {
+      // Crear SVG solo para el texto con fondo transparente
+      const textSvg = `
+        <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+          <!-- Título principal -->
+          <text x="540" y="240" text-anchor="middle" 
+                font-family="Arial, sans-serif" font-size="54" font-weight="bold" 
+                fill="rgba(255,255,255,0.95)" 
+                stroke="rgba(0,0,0,0.3)" stroke-width="2">
+            WALLPAPER DIGITAL
+          </text>
+          
+          <!-- Subtítulo -->
+          <text x="540" y="300" text-anchor="middle" 
+                font-family="Arial, sans-serif" font-size="24" 
+                fill="rgba(255,255,255,0.8)">
+            Colección Exclusiva
+          </text>
+          
+          <!-- Línea decorativa superior -->
+          <line x1="290" y1="340" x2="790" y2="340" 
+                stroke="rgba(255,255,255,0.6)" stroke-width="3"/>
+          
+          <!-- Números de wallpapers comprados -->
+          <text x="540" y="1180" text-anchor="middle" 
+                font-family="Arial, sans-serif" font-size="36" font-weight="bold"
+                fill="rgba(255,255,255,0.9)"
+                stroke="rgba(0,0,0,0.2)" stroke-width="1">
+            Wallpapers Comprados:
+          </text>
+          
+          <text x="540" y="1240" text-anchor="middle" 
+                font-family="Arial, sans-serif" font-size="48" font-weight="bold"
+                fill="rgba(255,255,255,1)"
+                stroke="rgba(0,0,0,0.3)" stroke-width="2">
+            ${wallpaperNumbers.map((n) => `#${n}`).join(' • ')}
+          </text>
+          
+          <!-- Cantidad total -->
+          <text x="540" y="1320" text-anchor="middle" 
+                font-family="Arial, sans-serif" font-size="32" font-weight="bold"
+                fill="rgba(255,255,255,0.9)"
+                stroke="rgba(0,0,0,0.2)" stroke-width="1">
+            ${wallpaperNumbers.length} Wallpaper${wallpaperNumbers.length !== 1 ? 's' : ''} Exclusivo${wallpaperNumbers.length !== 1 ? 's' : ''}
+          </text>
+          
+          <!-- Línea decorativa inferior -->
+          <line x1="290" y1="1380" x2="790" y2="1380" 
+                stroke="rgba(255,255,255,0.6)" stroke-width="3"/>
+          
+          <!-- Información del color único -->
+          <text x="540" y="1520" text-anchor="middle" 
+                font-family="Arial, sans-serif" font-size="28" 
+                fill="rgba(255,255,255,0.8)">
+            Color Único Personalizado
+          </text>
+          
+          <text x="540" y="1570" text-anchor="middle" 
+                font-family="Arial, sans-serif" font-size="20" 
+                fill="rgba(255,255,255,0.7)">
+            ${backgroundColor}
+          </text>
+          
+          <!-- Recuadro con el color -->
+          <rect x="440" y="1600" width="200" height="60" 
+                fill="${backgroundColor}" 
+                stroke="rgba(255,255,255,0.5)" 
+                stroke-width="2" 
+                rx="10"/>
+          
+          <!-- Marca de agua final -->
+          <text x="540" y="1750" text-anchor="middle" 
+                font-family="Arial, sans-serif" font-size="18" 
+                fill="rgba(255,255,255,0.5)">
+            digitalWallpapers.com
+          </text>
+          
+          <!-- Fecha/hora -->
+          <text x="540" y="1800" text-anchor="middle" 
+                font-family="Arial, sans-serif" font-size="14" 
+                fill="rgba(255,255,255,0.4)">
+            Generado: ${new Date().toLocaleDateString('es-CO')}
+          </text>
+        </svg>
+      `;
+
+      // Convertir SVG a buffer de imagen PNG con transparencia
+      const textBuffer = await sharp(Buffer.from(textSvg))
+        .png({
+          compressionLevel: 9,
+          adaptiveFiltering: false,
+          force: true,
+        })
+        .toBuffer();
+
+      return textBuffer;
+    } catch (error) {
+      this.logger.logError('Error creating text overlay', error);
+      return null;
+    }
+  }
+
+  private darkenColor(color: string, percent: number): string {
+    // Función para oscurecer un color por un porcentaje
+    if (color.startsWith('hsl')) {
+      const match = color.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+      if (match) {
+        const [, h, s, l] = match;
+        const newL = Math.max(0, parseInt(l) - percent);
+        return `hsl(${h}, ${s}%, ${newL}%)`;
+      }
+    }
+
+    if (color.startsWith('rgb')) {
+      const match = color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+      if (match) {
+        const [, r, g, b] = match;
+        const factor = (100 - percent) / 100;
+        const newR = Math.round(parseInt(r) * factor);
+        const newG = Math.round(parseInt(g) * factor);
+        const newB = Math.round(parseInt(b) * factor);
+        return `rgb(${newR}, ${newG}, ${newB})`;
+      }
+    }
+
+    return color;
+  }
+
+  // Método de prueba que usa el sistema real de emails con datos mockeados
+  async sendLoginTestEmail(userEmail: string, userName: string): Promise<void> {
+    try {
+      this.logger.logInfo('Sending login test email using payment confirmation system', {
+        userEmail,
+      });
+
+      // Datos mockeados para la prueba usando el sistema real
+      const mockPaymentData: PaymentEmailData = {
+        buyerEmail: userEmail,
+        buyerName: userName,
+        buyerContactNumber: '+57 300 123 4567', // Número de contacto de prueba
+        wallpaperNumbers: [1, 5, 9], // Números de prueba
+        amount: 15000, // $15.000 COP de prueba
+        currency: 'COP',
+        status: 'APPROVED', // Status de prueba
+        paymentId: 'TEST_LOGIN_' + Date.now(), // ID único de prueba
+        purchaseDate: new Date(),
+      };
+
+      // Usar el método real de confirmación de pago
+      await this.sendPaymentConfirmationEmail(mockPaymentData);
+
+      this.logger.logInfo('Login test email sent successfully using real payment system', {
+        userEmail,
+      });
+    } catch (error) {
+      this.logger.logError('Error sending login test email', {
+        userEmail,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      // No relanzamos el error para no afectar el flujo de login
+    }
+  }
+}

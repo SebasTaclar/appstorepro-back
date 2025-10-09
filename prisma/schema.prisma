@@ -1,0 +1,44 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-1.1.x", "debian-openssl-3.0.x", "linux-musl"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             Int      @id @default(autoincrement())
+  email          String   @unique
+  password       String
+  name           String
+  role           String
+  membershipPaid Boolean  @default(false) @map("membership_paid")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model Purchase {
+  id                         Int      @id @default(autoincrement())
+  wallpaperNumbers          String   @map("wallpaper_numbers") // JSON array of wallpaper numbers: "[1,5,9]"
+  buyerEmail                String   @map("buyer_email")
+  buyerName                 String   @map("buyer_name")
+  buyerIdentificationNumber String   @map("buyer_identification_number")
+  buyerContactNumber        String   @map("buyer_contact_number") // Contact/phone number
+  mercadopagoPaymentId      String?  @map("mercadopago_payment_id")
+  preferenceId              String   @map("preference_id")
+  externalReference         String   @map("external_reference")
+  status                    String   @default("PENDING") // PENDING, APPROVED, CANCELLED, REJECTED, COMPLETED, FAILED
+  amount                    Int      @default(15000) // Amount in COP (Colombian Pesos)
+  currency                  String   @default("COP")
+  // Campos para soportar múltiples proveedores de pago
+  paymentProvider           String?  @map("payment_provider") // MERCADOPAGO, WOMPI, etc.
+  wompiTransactionId        String?  @map("wompi_transaction_id") // ID de transacción de Wompi
+  createdAt                 DateTime @default(now()) @map("created_at")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
+
+  @@map("purchases")
+}

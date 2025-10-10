@@ -4,6 +4,7 @@
   "description": "",
   "scripts": {
     "build": "prisma generate && tsc",
+    "build:azure": "npm ci && prisma generate && tsc",
     "watch": "tsc -w",
     "clean": "rimraf dist",
     "prestart": "npm run clean && npm run build",
@@ -15,7 +16,7 @@
     "db:migrate": "npx prisma migrate dev",
     "db:push": "npx prisma db push",
     "db:studio": "npx prisma studio",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate || echo 'Prisma generate failed, will retry on build'"
   },
   "dependencies": {
     "@azure/communication-email": "^1.0.0",

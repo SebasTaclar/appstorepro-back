@@ -10,7 +10,7 @@ const funcCreateUser = async (
   log: Logger
 ): Promise<unknown> => {
   const authService = getAuthService(log);
-  const userInfo = await authService.createUser(req.body);
+  const userInfo = await authService.createUser(req.body); 
   return ApiResponseBuilder.success(userInfo, 'User created successfully');
 };
 

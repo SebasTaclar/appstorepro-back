@@ -3,10 +3,13 @@ import { AuthService } from '../application/services/AuthService';
 import { HealthService } from '../application/services/HealthService';
 import { PurchaseService } from '../application/services/PurchaseService';
 import { CleanupService } from '../application/services/CleanupService';
+import { CategoryService } from '../application/services/CategoryService';
 import { MercadoPagoService } from '../infrastructure/services/MercadoPagoService';
 import { EmailService } from '../infrastructure/services/EmailService';
 import { UserPrismaAdapter } from '../infrastructure/DbAdapters/UserPrismaAdapter';
+import { CategoryPrismaAdapter } from '../infrastructure/DbAdapters/CategoryPrismaAdapter';
 import { IUserDataSource } from '../domain/interfaces/IUserDataSource';
+import { ICategoryDataSource } from '../domain/interfaces/ICategoryDataSource';
 import { getPrismaClient } from '../config/PrismaClient';
 
 /**
@@ -24,11 +27,26 @@ export class ServiceProvider {
   }
 
   /**
+   * Crea una instancia de CategoryDataSource (actualmente PrismaAdapter)
+   */
+  static getCategoryDataSource(): ICategoryDataSource {
+    return new CategoryPrismaAdapter();
+  }
+
+  /**
    * Crea una instancia de AuthService con sus dependencias inyectadas
    */
   static getAuthService(logger: Logger): AuthService {
     const userDataSource = this.getUserDataSource();
     return new AuthService(logger, userDataSource);
+  }
+
+  /**
+   * Crea una instancia de CategoryService con sus dependencias inyectadas
+   */
+  static getCategoryService(logger: Logger): CategoryService {
+    const categoryDataSource = this.getCategoryDataSource();
+    return new CategoryService(logger, categoryDataSource);
   }
 
   /**
@@ -73,6 +91,10 @@ export const getAuthService = (logger: Logger): AuthService => {
   return ServiceProvider.getAuthService(logger);
 };
 
+export const getCategoryService = (logger: Logger): CategoryService => {
+  return ServiceProvider.getCategoryService(logger);
+};
+
 export const getHealthService = (logger: Logger): HealthService => {
   return ServiceProvider.getHealthService(logger);
 };
@@ -95,4 +117,8 @@ export const getMercadoPagoService = (): MercadoPagoService => {
 
 export const getUserDataSource = (): IUserDataSource => {
   return ServiceProvider.getUserDataSource();
+};
+
+export const getCategoryDataSource = (): ICategoryDataSource => {
+  return ServiceProvider.getCategoryDataSource();
 };

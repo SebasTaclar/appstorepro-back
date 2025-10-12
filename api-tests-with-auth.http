@@ -94,6 +94,174 @@ Authorization: {{token}}
 }
 
 ###
+# CATEGORIES ENDPOINTS (Require JWT Authentication)
+###
+
+### 9. Obtener todas las categorías - CON token válido
+GET {{baseUrl}}/api/v1/categories
+Authorization: Bearer {{token}}
+
+### 10. Obtener todas las categorías con filtro por nombre
+GET {{baseUrl}}/api/v1/categories?name=tecnologia
+Authorization: Bearer {{token}}
+
+### 11. Obtener todas las categorías con filtro por descripción
+GET {{baseUrl}}/api/v1/categories?description=wallpapers
+Authorization: Bearer {{token}}
+
+### 12. Obtener categoría por ID (usar ID existente)
+GET {{baseUrl}}/api/v1/categories/1
+Authorization: Bearer {{token}}
+
+### 13. Obtener categoría por ID inexistente (debe fallar con 404)
+GET {{baseUrl}}/api/v1/categories/999999
+Authorization: Bearer {{token}}
+
+### 14. Obtener categoría con ID inválido (debe fallar con 400)
+GET {{baseUrl}}/api/v1/categories/abc
+Authorization: Bearer {{token}}
+
+### 15. Obtener categorías SIN token (debe fallar con 401)
+GET {{baseUrl}}/api/v1/categories
+
+### 16. Crear nueva categoría - Solo nombre
+POST {{baseUrl}}/api/v1/categories
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Tecnología"
+}
+
+### 17. Crear nueva categoría - Con descripción
+POST {{baseUrl}}/api/v1/categories
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Naturaleza",
+  "description": "Wallpapers de paisajes naturales, montañas, bosques y océanos"
+}
+
+### 18. Crear nueva categoría - Con nombre duplicado (debe fallar con 400)
+POST {{baseUrl}}/api/v1/categories
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Tecnología"
+}
+
+### 19. Crear nueva categoría - Sin nombre (debe fallar con 400)
+POST {{baseUrl}}/api/v1/categories
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "description": "Descripción sin nombre"
+}
+
+### 20. Crear nueva categoría - Cuerpo vacío (debe fallar con 400)
+POST {{baseUrl}}/api/v1/categories
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{}
+
+### 21. Crear categoría SIN token (debe fallar con 401)
+POST {{baseUrl}}/api/v1/categories
+Content-Type: application/json
+
+{
+  "name": "Sin Token"
+}
+
+### 22. Actualizar categoría - Solo nombre
+PUT {{baseUrl}}/api/v1/categories/1
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Tecnología Actualizada"
+}
+
+### 23. Actualizar categoría - Solo descripción
+PUT {{baseUrl}}/api/v1/categories/1
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "description": "Nueva descripción para tecnología"
+}
+
+### 24. Actualizar categoría - Nombre y descripción
+PUT {{baseUrl}}/api/v1/categories/1
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Tech & Gadgets",
+  "description": "Wallpapers de tecnología, gadgets y elementos futuristas"
+}
+
+### 25. Actualizar categoría - Con nombre duplicado (debe fallar con 400)
+PUT {{baseUrl}}/api/v1/categories/1
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Naturaleza"
+}
+
+### 26. Actualizar categoría - ID inexistente (debe fallar con 404)
+PUT {{baseUrl}}/api/v1/categories/999999
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Categoría Inexistente"
+}
+
+### 27. Actualizar categoría - ID inválido (debe fallar con 400)
+PUT {{baseUrl}}/api/v1/categories/abc
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Test"
+}
+
+### 28. Actualizar categoría - Sin datos (debe fallar con 400)
+PUT {{baseUrl}}/api/v1/categories/1
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{}
+
+### 29. Actualizar categoría SIN token (debe fallar con 401)
+PUT {{baseUrl}}/api/v1/categories/1
+Content-Type: application/json
+
+{
+  "name": "Sin Token"
+}
+
+### 30. Eliminar categoría - ID válido
+DELETE {{baseUrl}}/api/v1/categories/1
+Authorization: Bearer {{token}}
+
+### 31. Eliminar categoría - ID inexistente (debe fallar con 404)
+DELETE {{baseUrl}}/api/v1/categories/999999
+Authorization: Bearer {{token}}
+
+### 32. Eliminar categoría - ID inválido (debe fallar con 400)
+DELETE {{baseUrl}}/api/v1/categories/abc
+Authorization: Bearer {{token}}
+
+### 33. Eliminar categoría SIN token (debe fallar con 401)
+DELETE {{baseUrl}}/api/v1/categories/1
+
+###
 # EJEMPLOS PARA COPIAR TOKEN MANUALMENTE
 ###
 

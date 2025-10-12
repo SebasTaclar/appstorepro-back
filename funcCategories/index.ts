@@ -2,18 +2,20 @@ import { Context, HttpRequest } from '@azure/functions';
 import { Logger } from '../src/shared/Logger';
 import { ApiResponseBuilder } from '../src/shared/ApiResponse';
 import { getCategoryService } from '../src/shared/serviceProvider';
-import { withApiHandler } from '../src/shared/apiHandler';
+import { withAuthenticatedApiHandler } from '../src/shared/apiHandler';
+import { AuthenticatedUser } from '../src/shared/authMiddleware';
 
 const funcCategories = async (
   _context: Context,
   req: HttpRequest,
-  log: Logger
+  log: Logger,
+  user: AuthenticatedUser
 ): Promise<unknown> => {
   const categoryService = getCategoryService(log);
   const method = req.method?.toUpperCase();
   const categoryId = req.params?.id;
 
-  log.logInfo(`Processing ${method} request for categories`, { categoryId });
+  log.logInfo(`Processing ${method} request for categories`, { categoryId, userId: user.id });
 
   switch (method) {
     case 'GET':
@@ -33,8 +35,7 @@ const funcCategories = async (
         );
       }
 
-    case 'POST': // POST /v1/categories - Crear nueva categoría
-    {
+    case 'POST': { // POST /v1/categories - Crear nueva categoría
       if (categoryId) {
         return ApiResponseBuilder.validationError([
           'ID should not be provided when creating a category',
@@ -44,8 +45,7 @@ const funcCategories = async (
       return ApiResponseBuilder.success(newCategory, 'Category created successfully');
     }
 
-    case 'PUT': // PUT /v1/categories/{id} - Actualizar categoría
-    {
+    case 'PUT': { // PUT /v1/categories/{id} - Actualizar categoría
       if (!categoryId) {
         return ApiResponseBuilder.validationError(['Category ID is required for update']);
       }
@@ -66,4 +66,4 @@ const funcCategories = async (
   }
 };
 
-export default withApiHandler(funcCategories);
+export default withAuthenticatedApiHandler(funcCategories);

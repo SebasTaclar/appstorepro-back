@@ -144,5 +144,5 @@ Content-Type: application/json
 # Use api-tests-with-auth.http for authenticated requests
 ###
 
-# Note: funcCreateUser requires authentication
-# Please use api-tests-with-auth.http for user creation tests
+# Note: funcCreateUser and funcCategories require authentication
+# Please use api-tests-with-auth.http for user creation and categories tests

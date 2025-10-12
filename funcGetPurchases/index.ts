@@ -40,11 +40,12 @@ const funcGetPurchases = async (
   // Formatear la respuesta
   const formattedPurchases = purchases.map((purchase) => ({
     id: purchase.id,
-    wallpaperNumbers: purchase.wallpaperNumbers, // Ya viene como array del service
+    items: purchase.items, // Sistema de productos con detalles completos
     buyerEmail: purchase.buyerEmail,
     buyerName: purchase.buyerName,
     buyerContactNumber: purchase.buyerContactNumber,
     status: purchase.status,
+    orderStatus: purchase.orderStatus,
     amount: purchase.amount,
     currency: purchase.currency,
     createdAt: purchase.createdAt,

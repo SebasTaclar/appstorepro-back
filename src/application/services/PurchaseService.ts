@@ -483,8 +483,60 @@ export class PurchaseService {
 
   // Otros métodos mantenidos para compatibilidad...
   async getAllPurchases(): Promise<FormattedPurchase[]> {
-    // Implementación similar adaptada para OrderDetails
-    return [];
+    try {
+      Logger.info('Getting all purchases');
+
+      const purchases = await this.prisma.purchase.findMany({
+        include: {
+          orderDetails: {
+            include: {
+              product: {
+                select: {
+                  id: true,
+                  name: true,
+                  description: true,
+                  images: true,
+                  categoryId: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { updatedAt: 'desc' },
+      });
+
+      const formattedPurchases: FormattedPurchase[] = purchases.map((purchase) => ({
+        id: purchase.id,
+        buyerEmail: purchase.buyerEmail,
+        buyerName: purchase.buyerName,
+        buyerContactNumber: purchase.buyerContactNumber,
+        status: purchase.status,
+        orderStatus: purchase.orderStatus,
+        amount: purchase.amount,
+        currency: purchase.currency,
+        mercadopagoPaymentId: purchase.mercadopagoPaymentId,
+        wallpaperNumbers: purchase.orderDetails.map((detail) => detail.productId), // Para compatibilidad
+        items: purchase.orderDetails.map((detail) => ({
+          productId: detail.productId,
+          productName: detail.product?.name || 'Unknown Product',
+          quantity: detail.quantity,
+          unitPrice: Number(detail.unitPrice),
+          totalPrice: Number(detail.totalPrice),
+          selectedColor: detail.selectedColor,
+        })),
+        createdAt: purchase.createdAt,
+        updatedAt: purchase.updatedAt,
+      }));
+
+      Logger.info('All purchases retrieved successfully', {
+        count: formattedPurchases.length,
+      });
+
+      return formattedPurchases;
+    } catch (error) {
+      Logger.error('Error getting all purchases', error);
+      throw error;
+    }
   }
 
   async getWallpaperStatus(): Promise<{ approved: number[]; pending: number[] }> {

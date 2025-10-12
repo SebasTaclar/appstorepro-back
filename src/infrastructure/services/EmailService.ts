@@ -24,8 +24,13 @@ export interface PaymentEmailData {
   buyerEmail: string;
   buyerName: string;
   buyerContactNumber: string;
-  wallpaperNumbers: number[];
-  amount: number;
+  items: Array<{
+    productName: string;
+    quantity: number;
+    unitPrice: number;
+    totalPrice: number;
+  }>;
+  totalAmount: number;
   currency: string;
   status: string;
   paymentId: string;
@@ -40,6 +45,36 @@ export interface PaymentWebhookData {
   paymentMethodId?: string;
   dateApproved?: string;
   dateCreated?: string;
+}
+
+interface EmailRecipient {
+  address: string;
+  displayName: string;
+}
+
+interface EmailContent {
+  subject: string;
+  html: string;
+  plainText: string;
+}
+
+interface EmailMessageStructure {
+  senderAddress: string;
+  content: EmailContent;
+  recipients: {
+    to: EmailRecipient[];
+  };
+  attachments?: Array<{
+    name: string;
+    contentType: string;
+    contentInBase64: string;
+  }>;
+}
+
+interface CompositeImage {
+  input: Buffer;
+  top: number;
+  left: number;
 }
 
 export class EmailService {
@@ -73,7 +108,7 @@ export class EmailService {
         attachmentCount: emailData.attachments?.length || 0,
       });
 
-      const message: any = {
+      const message: EmailMessageStructure = {
         senderAddress: this.senderEmail,
         content: {
           subject: emailData.subject,
@@ -122,7 +157,7 @@ export class EmailService {
       this.logger.logInfo('Sending payment confirmation email', {
         buyerEmail: paymentData.buyerEmail,
         status: paymentData.status,
-        wallpaperNumbers: paymentData.wallpaperNumbers,
+        itemCount: paymentData.items.length,
       });
 
       // Solo generar wallpaper si el pago está aprobado o completado
@@ -141,11 +176,10 @@ export class EmailService {
         });
 
         // Generar attachment de wallpaper personalizado con color único
-        uniqueColor = this.generateUniqueColor(paymentData.wallpaperNumbers);
-        const imageAttachment = await this.generateWallpaperAttachment(
-          uniqueColor,
-          paymentData.wallpaperNumbers
-        );
+        // Crear lista de números de productos para generar color único
+        const productIds = paymentData.items.map((_, index) => index + 1);
+        uniqueColor = this.generateUniqueColor(productIds);
+        const imageAttachment = await this.generateWallpaperAttachment(uniqueColor, productIds);
         attachments = [imageAttachment];
         attachmentName = imageAttachment.name;
       } else {
@@ -156,7 +190,8 @@ export class EmailService {
             status: paymentData.status,
           }
         );
-        uniqueColor = this.generateUniqueColor(paymentData.wallpaperNumbers);
+        const productIds = paymentData.items.map((_, index) => index + 1);
+        uniqueColor = this.generateUniqueColor(productIds);
       }
 
       const emailData: EmailData = {
@@ -216,8 +251,8 @@ export class EmailService {
         buyerEmail: purchase.buyerEmail,
         buyerName: purchase.buyerName,
         buyerContactNumber: purchase.buyerContactNumber || 'No proporcionado',
-        wallpaperNumbers: purchase.wallpaperNumbers,
-        amount: purchase.amount,
+        items: [], // TODO: Cargar items desde OrderDetails
+        totalAmount: purchase.amount,
         currency: purchase.currency,
         status: mappedStatus,
         paymentId: paymentWebhookData.id,
@@ -261,12 +296,14 @@ export class EmailService {
   ): string {
     const statusIcon = this.getStatusIcon(data.status);
     const statusMessage = this.getStatusMessage(data.status);
-    const wallpapersList = data.wallpaperNumbers.map((num) => `#${num}`).join(', ');
+    const itemsList = data.items
+      .map((item) => `${item.productName} (x${item.quantity})`)
+      .join(', ');
 
     const formattedAmount = new Intl.NumberFormat('es-CO', {
       style: 'currency',
       currency: data.currency,
-    }).format(data.amount);
+    }).format(data.totalAmount);
 
     const formattedDate = data.purchaseDate.toLocaleDateString('es-CO', {
       year: 'numeric',
@@ -283,7 +320,7 @@ export class EmailService {
       wallpaperSection = `
                 <div class="moto-preview">
                     <div class="preview-title">🎨 Wallpaper personalizado adjunto</div>
-                    <p style="color: #666; margin-bottom: 15px;">Wallpaper único generado para: ${wallpapersList}</p>
+                    <p style="color: #666; margin-bottom: 15px;">Productos incluidos: ${itemsList}</p>
                     <div style="background: ${uniqueColor}; padding: 20px; border-radius: 10px; margin: 15px 0;">
                         <p style="color: white; text-align: center; font-weight: bold; margin: 0;">
                             📎 ${attachmentName}
@@ -335,7 +372,7 @@ export class EmailService {
       wallpaperSection = `
                 <div class="moto-preview">
                     <div class="preview-title">📱 Wallpapers reservados</div>
-                    <p style="color: #666; margin-bottom: 15px;">Wallpapers reservados para: ${wallpapersList}</p>
+                    <p style="color: #666; margin-bottom: 15px;">Productos reservados: ${itemsList}</p>
                     <div style="background: ${uniqueColor}; padding: 20px; border-radius: 10px; margin: 15px 0;">
                         <p style="color: white; text-align: center; font-weight: bold; margin: 0;">
                             ⏳ Esperando confirmación de pago
@@ -393,8 +430,8 @@ export class EmailService {
                 <div class="wallpaper-list">
                     <h4>📱 Detalles de tu compra:</h4>
                     <ul>
-                        <li><strong>Wallpapers:</strong> ${wallpapersList}</li>
-                        <li><strong>Cantidad:</strong> ${data.wallpaperNumbers.length} wallpaper${data.wallpaperNumbers.length !== 1 ? 's' : ''}</li>
+                        <li><strong>Productos:</strong> ${itemsList}</li>
+                        <li><strong>Cantidad:</strong> ${data.items.length} producto${data.items.length !== 1 ? 's' : ''}</li>
                         <li><strong>Monto:</strong> ${formattedAmount}</li>
                         <li><strong>Estado:</strong> <span class="status-${data.status.toLowerCase()}">${data.status}</span></li>
                         <li><strong>ID de Pago:</strong> ${data.paymentId}</li>
@@ -768,7 +805,7 @@ export class EmailService {
       let wallpaperImage = sharp(backgroundBuffer);
 
       // Array para las imágenes que vamos a componer
-      const compositeImages: any[] = [];
+      const compositeImages: CompositeImage[] = [];
 
       // Intentar descargar y añadir la imagen de moto (centrada en el círculo)
       try {
@@ -1023,8 +1060,11 @@ export class EmailService {
         buyerEmail: userEmail,
         buyerName: userName,
         buyerContactNumber: '+57 300 123 4567', // Número de contacto de prueba
-        wallpaperNumbers: [1, 5, 9], // Números de prueba
-        amount: 15000, // $15.000 COP de prueba
+        items: [
+          { productName: 'Producto de Prueba 1', quantity: 1, unitPrice: 10000, totalPrice: 10000 },
+          { productName: 'Producto de Prueba 2', quantity: 1, unitPrice: 5000, totalPrice: 5000 },
+        ],
+        totalAmount: 15000, // $15.000 COP de prueba
         currency: 'COP',
         status: 'APPROVED', // Status de prueba
         paymentId: 'TEST_LOGIN_' + Date.now(), // ID único de prueba

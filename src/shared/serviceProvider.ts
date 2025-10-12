@@ -10,9 +10,11 @@ import { EmailService } from '../infrastructure/services/EmailService';
 import { UserPrismaAdapter } from '../infrastructure/DbAdapters/UserPrismaAdapter';
 import { CategoryPrismaAdapter } from '../infrastructure/DbAdapters/CategoryPrismaAdapter';
 import { ProductPrismaAdapter } from '../infrastructure/DbAdapters/ProductPrismaAdapter';
+import { OrderDetailPrismaAdapter } from '../infrastructure/DbAdapters/OrderDetailPrismaAdapter';
 import { IUserDataSource } from '../domain/interfaces/IUserDataSource';
 import { ICategoryDataSource } from '../domain/interfaces/ICategoryDataSource';
 import { IProductDataSource } from '../domain/interfaces/IProductDataSource';
+import { IOrderDetailDataSource } from '../domain/interfaces/IOrderDetailDataSource';
 import { getPrismaClient } from '../config/PrismaClient';
 
 /**
@@ -41,6 +43,13 @@ export class ServiceProvider {
    */
   static getProductDataSource(): IProductDataSource {
     return new ProductPrismaAdapter();
+  }
+
+  /**
+   * Crea una instancia de OrderDetailDataSource (actualmente PrismaAdapter)
+   */
+  static getOrderDetailDataSource(): IOrderDetailDataSource {
+    return new OrderDetailPrismaAdapter();
   }
 
   /**
@@ -79,7 +88,9 @@ export class ServiceProvider {
    * Crea una instancia de PurchaseService con sus dependencias inyectadas
    */
   static getPurchaseService(): PurchaseService {
-    return new PurchaseService(this.prismaClient);
+    const orderDetailDataSource = this.getOrderDetailDataSource();
+    const productDataSource = this.getProductDataSource();
+    return new PurchaseService(this.prismaClient, orderDetailDataSource, productDataSource);
   }
 
   /**
@@ -148,4 +159,8 @@ export const getCategoryDataSource = (): ICategoryDataSource => {
 
 export const getProductDataSource = (): IProductDataSource => {
   return ServiceProvider.getProductDataSource();
+};
+
+export const getOrderDetailDataSource = (): IOrderDetailDataSource => {
+  return ServiceProvider.getOrderDetailDataSource();
 };

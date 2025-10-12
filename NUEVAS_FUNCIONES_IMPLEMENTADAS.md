@@ -1,6 +1,92 @@
 # Nuevas Funciones Implementadas
 
-## 1. funcResendEmail - Reenvío de Emails
+## 1. funcCreatePayment - Sistema Modernizado de Pagos (NUEVO)
+
+**Propósito**: Sistema de pagos modernizado basado en productos y carrito de compras con integración exclusiva a Wompi.
+
+**Endpoint**: `POST /api/funcCreatePayment`
+**Headers**: `Content-Type: application/json`
+
+**Body de ejemplo**:
+
+```json
+{
+  "buyerEmail": "cliente@ejemplo.com",
+  "buyerName": "Juan Pérez",
+  "buyerIdentificationNumber": "12345678",
+  "buyerContactNumber": "+573001234567",
+  "shippingAddress": "Calle 123 #45-67, Bogotá (Opcional)",
+  "items": [
+    {
+      "productId": 1,
+      "quantity": 2,
+      "selectedColor": "Azul"
+    },
+    {
+      "productId": 3,
+      "quantity": 1,
+      "selectedColor": "Rojo"
+    }
+  ]
+}
+```
+
+**Respuesta exitosa**:
+
+```json
+{
+  "success": true,
+  "message": "Payment created successfully with Wompi",
+  "data": {
+    "purchase": {
+      "id": 123,
+      "totalAmount": 45000,
+      "currency": "COP",
+      "status": "PENDING",
+      "orderStatus": "PENDING",
+      "items": [
+        {
+          "productId": 1,
+          "productName": "Producto Ejemplo",
+          "quantity": 2,
+          "unitPrice": 15000,
+          "totalPrice": 30000,
+          "selectedColor": "Azul"
+        }
+      ]
+    },
+    "payment": {
+      "wompiTransactionId": "REF-1697901234-abc123",
+      "paymentUrl": "https://checkout.wompi.co/p/?...",
+      "provider": "WOMPI"
+    }
+  },
+  "timestamp": "2024-10-21T...",
+  "statusCode": 200
+}
+```
+
+**Características principales**:
+
+- ✅ Sistema de carrito con múltiples productos
+- ✅ Validación de stock y disponibilidad
+- ✅ Soporte para colores de productos
+- ✅ Precios históricos con OrderDetail
+- ✅ Integración exclusiva con Wompi
+- ✅ Validaciones completas de datos
+
+**Validaciones**:
+
+- Todos los campos del comprador son obligatorios excepto `shippingAddress`
+- `items` debe ser un array no vacío
+- Cada item debe tener `productId` y `quantity` válidos
+- `selectedColor` es opcional pero debe existir en el producto
+- Los productos deben estar disponibles (`status: 'available'`)
+- Validación de formato de email y números de contacto
+
+---
+
+## 2. funcResendEmail - Reenvío de Emails
 
 **Propósito**: Permite reenviar emails de confirmación cuando los usuarios digitaron mal su email.
 
@@ -89,7 +175,6 @@ Asegúrate de que estas variables estén en `local.settings.json`:
 ## Correcciones Realizadas
 
 1. **Validación de wallpapers**: Actualizada de 1-1000 a 1-5000 en:
-
    - PurchaseService.ts
    - WompiPurchaseService.ts
 
@@ -102,13 +187,11 @@ Asegúrate de que estas variables estén en `local.settings.json`:
 ## Pruebas Recomendadas
 
 1. **Probar funcResendEmail**:
-
    - Crear una compra
    - Usar el endpoint para reenviar el email
    - Verificar que llegue el email
 
 2. **Probar funcUpdatePurchase**:
-
    - Actualizar el email de una compra
    - Verificar que se guarde correctamente
 
@@ -122,17 +205,37 @@ Asegúrate de que estas variables estén en `local.settings.json`:
 
 ### Nuevos archivos:
 
+- `funcCreatePayment/function.json` _(modernizado)_
+- `funcCreatePayment/index.ts` _(modernizado)_
 - `funcResendEmail/function.json`
 - `funcResendEmail/index.ts`
 - `funcUpdatePurchase/function.json`
 - `funcUpdatePurchase/index.ts`
 - `funcBackupTimer/function.json`
 - `funcBackupTimer/index.ts`
+- `src/infrastructure/DbAdapters/OrderDetailPrismaAdapter.ts` _(nuevo)_
+- `src/domain/entities/OrderDetail.ts` _(nuevo)_
+- `src/domain/interfaces/IOrderDetailDataSource.ts` _(nuevo)_
 
 ### Archivos modificados:
 
-- `src/application/services/PurchaseService.ts`
+- `src/application/services/PurchaseService.ts` _(modernizado para productos)_
 - `src/application/services/WompiPurchaseService.ts`
+- `src/infrastructure/services/EmailService.ts` _(adaptado para productos)_
+- `src/shared/serviceProvider.ts` _(agregado OrderDetail)_
+- `prisma/schema.prisma` _(agregada tabla OrderDetail)_
 - `local.settings.json`
+- `api-tests.http` _(documentación actualizada)_
+
+### Sistema de Base de Datos:
+
+**Nueva tabla OrderDetail**:
+
+- Normaliza la relación Purchase -> Products
+- Preserva precios históricos (unitPrice, totalPrice)
+- Soporte para colores seleccionados
+- Relación many-to-many entre Purchase y Product
+
+**Migración aplicada**: `add_order_details_and_modernize_purchases`
 
 Todas las funciones siguen las mejores prácticas del proyecto y están listas para producción.

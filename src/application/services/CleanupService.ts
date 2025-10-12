@@ -17,7 +17,6 @@ export interface PendingPurchase {
   mercadopagoPaymentId: string | null;
   preferenceId: string;
   externalReference: string;
-  wallpaperNumbers: string;
   status: string;
   paymentProvider: string | null; // MERCADOPAGO, WOMPI, etc.
   wompiTransactionId: string | null; // ID de transacción de Wompi
@@ -58,7 +57,6 @@ export class CleanupService {
           mercadopagoPaymentId: true,
           preferenceId: true,
           externalReference: true,
-          wallpaperNumbers: true,
           status: true,
           paymentProvider: true,
           wompiTransactionId: true,
@@ -282,12 +280,11 @@ export class CleanupService {
           newStatus: newStatus,
         });
 
-        // Log de wallpapers liberados si el pago fue cancelado
+        // Log de productos liberados si el pago fue cancelado
         if (newStatus === 'CANCELLED') {
-          const wallpaperNumbers = JSON.parse(purchase.wallpaperNumbers);
-          this.logger.logInfo('Wallpapers released due to Wompi payment abandonment/timeout', {
+          // TODO: Adaptar al nuevo sistema de OrderDetails cuando sea necesario
+          this.logger.logInfo('Purchase cancelled due to Wompi payment abandonment/timeout', {
             purchaseId: purchase.id,
-            wallpaperNumbers: wallpaperNumbers,
             newStatus: newStatus,
           });
         }
@@ -390,12 +387,11 @@ export class CleanupService {
           },
         });
 
-        // Log de wallpapers liberados si el pago fue rechazado o cancelado
+        // Log de productos liberados si el pago fue rechazado o cancelado
         if (newStatus === 'REJECTED' || newStatus === 'CANCELLED') {
-          const wallpaperNumbers = JSON.parse(purchase.wallpaperNumbers);
-          this.logger.logInfo('Wallpapers released due to MercadoPago payment failure', {
+          // TODO: Adaptar al nuevo sistema de OrderDetails cuando sea necesario
+          this.logger.logInfo('Purchase failed due to MercadoPago payment failure', {
             purchaseId: purchase.id,
-            wallpaperNumbers: wallpaperNumbers,
             newStatus: newStatus,
           });
         }

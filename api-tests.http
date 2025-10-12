@@ -11,6 +11,13 @@
 # 
 # ⚠️ IMPORTANTE: Los endpoints de USER CREATION requieren autenticación JWT
 # Para pruebas con autenticación, usar el archivo: api-tests-with-auth.http
+#
+# 🛒 NUEVO SISTEMA DE PAGOS (funcCreatePayment):
+# - Sistema modernizado basado en productos y carrito de compras
+# - Soporte para múltiples productos con cantidades y colores
+# - Integración exclusiva con Wompi (sin MercadoPago)
+# - Normalización con tabla OrderDetail para histórico de precios
+# - Respuesta incluye: purchaseId, paymentUrl (Wompi), totalAmount, items
 
 ###
 # PUBLIC ENDPOINTS (No authentication required)
@@ -59,6 +66,108 @@ POST http://localhost:7071/api/funcLogin
 Content-Type: application/json
 
 {}
+
+### Create Payment - Modern Product-Based System (Wompi)
+### Creates a purchase with multiple products and generates Wompi payment URL
+POST http://localhost:7071/api/funcCreatePayment
+Content-Type: application/json
+
+{
+  "buyerEmail": "cliente@ejemplo.com",
+  "buyerName": "Juan Pérez",
+  "buyerIdentificationNumber": "12345678",
+  "buyerContactNumber": "+573001234567",
+  "shippingAddress": "Calle 123 #45-67, Bogotá",
+  "items": [
+    {
+      "productId": 1,
+      "quantity": 2,
+      "selectedColor": "Azul"
+    },
+    {
+      "productId": 3,
+      "quantity": 1,
+      "selectedColor": "Rojo"
+    }
+  ]
+}
+
+### Create Payment - Minimal Required Fields
+POST http://localhost:7071/api/funcCreatePayment
+Content-Type: application/json
+
+{
+  "buyerEmail": "test@ejemplo.com",
+  "buyerName": "Test User",
+  "buyerIdentificationNumber": "987654321",
+  "buyerContactNumber": "3001234567",
+  "items": [
+    {
+      "productId": 1,
+      "quantity": 1
+    }
+  ]
+}
+
+### Create Payment - Invalid Email (Should fail with validation error)
+POST http://localhost:7071/api/funcCreatePayment
+Content-Type: application/json
+
+{
+  "buyerEmail": "email-invalido",
+  "buyerName": "Test User",
+  "buyerIdentificationNumber": "987654321",
+  "buyerContactNumber": "3001234567",
+  "items": [
+    {
+      "productId": 1,
+      "quantity": 1
+    }
+  ]
+}
+
+### Create Payment - Missing Required Fields (Should fail)
+POST http://localhost:7071/api/funcCreatePayment
+Content-Type: application/json
+
+{
+  "buyerEmail": "test@ejemplo.com",
+  "items": []
+}
+
+### Create Payment - Invalid Product ID (Should fail)
+POST http://localhost:7071/api/funcCreatePayment
+Content-Type: application/json
+
+{
+  "buyerEmail": "test@ejemplo.com",
+  "buyerName": "Test User",
+  "buyerIdentificationNumber": "987654321",
+  "buyerContactNumber": "3001234567",
+  "items": [
+    {
+      "productId": 999999,
+      "quantity": 1
+    }
+  ]
+}
+
+### Create Payment - Zero Quantity (Should fail)
+POST http://localhost:7071/api/funcCreatePayment
+Content-Type: application/json
+
+{
+  "buyerEmail": "test@ejemplo.com",
+  "buyerName": "Test User",
+  "buyerIdentificationNumber": "987654321",
+  "buyerContactNumber": "3001234567",
+  "items": [
+    {
+      "productId": 1,
+      "quantity": 0
+    }
+  ]
+}
 
 ### 10. Reenviar email de compra exitosa (usar ID de compra existente)
 POST http://localhost:7071/api/v1/purchase/resend-email

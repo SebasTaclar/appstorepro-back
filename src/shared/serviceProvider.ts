@@ -1,15 +1,18 @@
 import { Logger } from './Logger';
 import { AuthService } from '../application/services/AuthService';
+import { CategoryService } from '../application/services/CategoryService';
+import { ProductService } from '../application/services/ProductService';
 import { HealthService } from '../application/services/HealthService';
 import { PurchaseService } from '../application/services/PurchaseService';
 import { CleanupService } from '../application/services/CleanupService';
-import { CategoryService } from '../application/services/CategoryService';
 import { MercadoPagoService } from '../infrastructure/services/MercadoPagoService';
 import { EmailService } from '../infrastructure/services/EmailService';
 import { UserPrismaAdapter } from '../infrastructure/DbAdapters/UserPrismaAdapter';
 import { CategoryPrismaAdapter } from '../infrastructure/DbAdapters/CategoryPrismaAdapter';
+import { ProductPrismaAdapter } from '../infrastructure/DbAdapters/ProductPrismaAdapter';
 import { IUserDataSource } from '../domain/interfaces/IUserDataSource';
 import { ICategoryDataSource } from '../domain/interfaces/ICategoryDataSource';
+import { IProductDataSource } from '../domain/interfaces/IProductDataSource';
 import { getPrismaClient } from '../config/PrismaClient';
 
 /**
@@ -34,6 +37,13 @@ export class ServiceProvider {
   }
 
   /**
+   * Crea una instancia de ProductDataSource (actualmente PrismaAdapter)
+   */
+  static getProductDataSource(): IProductDataSource {
+    return new ProductPrismaAdapter();
+  }
+
+  /**
    * Crea una instancia de AuthService con sus dependencias inyectadas
    */
   static getAuthService(logger: Logger): AuthService {
@@ -47,6 +57,15 @@ export class ServiceProvider {
   static getCategoryService(logger: Logger): CategoryService {
     const categoryDataSource = this.getCategoryDataSource();
     return new CategoryService(logger, categoryDataSource);
+  }
+
+  /**
+   * Crea una instancia de ProductService con sus dependencias inyectadas
+   */
+  static getProductService(logger: Logger): ProductService {
+    const productDataSource = this.getProductDataSource();
+    const categoryDataSource = this.getCategoryDataSource();
+    return new ProductService(logger, productDataSource, categoryDataSource);
   }
 
   /**
@@ -95,6 +114,10 @@ export const getCategoryService = (logger: Logger): CategoryService => {
   return ServiceProvider.getCategoryService(logger);
 };
 
+export const getProductService = (logger: Logger): ProductService => {
+  return ServiceProvider.getProductService(logger);
+};
+
 export const getHealthService = (logger: Logger): HealthService => {
   return ServiceProvider.getHealthService(logger);
 };
@@ -121,4 +144,8 @@ export const getUserDataSource = (): IUserDataSource => {
 
 export const getCategoryDataSource = (): ICategoryDataSource => {
   return ServiceProvider.getCategoryDataSource();
+};
+
+export const getProductDataSource = (): IProductDataSource => {
+  return ServiceProvider.getProductDataSource();
 };

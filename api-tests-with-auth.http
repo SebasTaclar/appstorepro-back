@@ -262,6 +262,231 @@ Authorization: Bearer {{token}}
 DELETE {{baseUrl}}/api/v1/categories/1
 
 ###
+# PRODUCTS ENDPOINTS (Require JWT Authentication)
+###
+
+### 34. Obtener todos los productos - CON token válido
+GET {{baseUrl}}/api/v1/products
+Authorization: Bearer {{token}}
+
+### 35. Obtener productos con filtro por nombre
+GET {{baseUrl}}/api/v1/products?name=wallpaper
+Authorization: Bearer {{token}}
+
+### 36. Obtener productos con filtro por categoría
+GET {{baseUrl}}/api/v1/products?categoryId=1
+Authorization: Bearer {{token}}
+
+### 37. Obtener productos de showcase (productos destacados)
+GET {{baseUrl}}/api/v1/products?showcase=true
+Authorization: Bearer {{token}}
+
+### 38. Obtener producto por ID (usar ID existente)
+GET {{baseUrl}}/api/v1/products/1
+Authorization: Bearer {{token}}
+
+### 39. Obtener producto por ID inexistente (debe fallar con 404)
+GET {{baseUrl}}/api/v1/products/999999
+Authorization: Bearer {{token}}
+
+### 40. Obtener producto con ID inválido (debe fallar con 400)
+GET {{baseUrl}}/api/v1/products/abc
+Authorization: Bearer {{token}}
+
+### 41. Obtener productos SIN token (debe fallar con 401)
+GET {{baseUrl}}/api/v1/products
+
+### 42. Crear nuevo producto básico
+POST {{baseUrl}}/api/v1/products
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Premium Nature Pack",
+  "description": "Colección de wallpapers de naturaleza en alta resolución",
+  "price": 5.99,
+  "categoryId": 1,
+  "images": [
+    "https://example.com/nature1.jpg",
+    "https://example.com/nature2.jpg",
+    "https://example.com/nature3.jpg"
+  ]
+}
+
+### 43. Crear nuevo producto completo con showcase
+POST {{baseUrl}}/api/v1/products
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Tech Wallpapers Ultimate",
+  "description": "La mejor colección de wallpapers tecnológicos y futuristas",
+  "price": 9.99,
+  "originalPrice": 12.99,
+  "categoryId": 1,
+  "images": [
+    "https://example.com/tech1.jpg",
+    "https://example.com/tech2.jpg",
+    "https://example.com/tech3.jpg",
+    "https://example.com/tech4.jpg"
+  ],
+  "colors": ["Azul Tecnológico", "Gris Espacial", "Verde Matrix"],
+  "isShowcase": true,
+  "showcaseImage": "https://example.com/showcase/tech-ultimate.jpg",
+  "status": "available"
+}
+
+### 44. Crear producto con categoría inexistente (debe fallar con 400)
+POST {{baseUrl}}/api/v1/products
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Producto Test",
+  "description": "Test con categoría inexistente",
+  "price": 1.99,
+  "categoryId": 999999,
+  "images": ["https://example.com/test.jpg"]
+}
+
+### 45. Crear producto sin datos requeridos (debe fallar con 400)
+POST {{baseUrl}}/api/v1/products
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "description": "Sin nombre ni precio"
+}
+
+### 46. Crear producto con precio negativo (debe fallar con 400)
+POST {{baseUrl}}/api/v1/products
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Producto Inválido",
+  "description": "Precio negativo",
+  "price": -5.99,
+  "categoryId": 1,
+  "images": ["https://example.com/invalid.jpg"]
+}
+
+### 47. Crear producto SIN token (debe fallar con 401)
+POST {{baseUrl}}/api/v1/products
+Content-Type: application/json
+
+{
+  "name": "Sin Token",
+  "description": "Producto sin autenticación",
+  "price": 1.99,
+  "categoryId": 1,
+  "images": ["https://example.com/notoken.jpg"]
+}
+
+### 48. Actualizar producto - Solo nombre y descripción
+PUT {{baseUrl}}/api/v1/products/1
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Premium Nature Pack Updated",
+  "description": "Colección actualizada de wallpapers de naturaleza"
+}
+
+### 49. Actualizar producto - Solo precio
+PUT {{baseUrl}}/api/v1/products/1
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "price": 7.99
+}
+
+### 50. Actualizar producto - Agregar a showcase
+PUT {{baseUrl}}/api/v1/products/1
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "isShowcase": true,
+  "showcaseImage": "https://example.com/showcase/nature-premium.jpg"
+}
+
+### 51. Actualizar producto - Cambiar colores
+PUT {{baseUrl}}/api/v1/products/1
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "colors": ["Verde Natural", "Marrón Tierra", "Azul Cielo"]
+}
+
+### 52. Actualizar producto - Cambiar imágenes y precio original
+PUT {{baseUrl}}/api/v1/products/1
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "images": [
+    "https://example.com/nature-new1.jpg",
+    "https://example.com/nature-new2.jpg",
+    "https://example.com/nature-new3.jpg",
+    "https://example.com/nature-new4.jpg"
+  ],
+  "originalPrice": 8.99
+}
+
+### 53. Actualizar producto - Con categoría inexistente (debe fallar con 400)
+PUT {{baseUrl}}/api/v1/products/1
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "categoryId": 999999
+}
+
+### 54. Actualizar producto - ID inexistente (debe fallar con 404)
+PUT {{baseUrl}}/api/v1/products/999999
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Producto Inexistente"
+}
+
+### 55. Actualizar producto - ID inválido (debe fallar con 400)
+PUT {{baseUrl}}/api/v1/products/abc
+Content-Type: application/json
+Authorization: Bearer {{token}}
+
+{
+  "name": "Test"
+}
+
+### 56. Actualizar producto SIN token (debe fallar con 401)
+PUT {{baseUrl}}/api/v1/products/1
+Content-Type: application/json
+
+{
+  "name": "Sin Token"
+}
+
+### 57. Eliminar producto - ID válido
+DELETE {{baseUrl}}/api/v1/products/1
+Authorization: Bearer {{token}}
+
+### 58. Eliminar producto - ID inexistente (debe fallar con 404)
+DELETE {{baseUrl}}/api/v1/products/999999
+Authorization: Bearer {{token}}
+
+### 59. Eliminar producto - ID inválido (debe fallar con 400)
+DELETE {{baseUrl}}/api/v1/products/abc
+Authorization: Bearer {{token}}
+
+### 60. Eliminar producto SIN token (debe fallar con 401)
+DELETE {{baseUrl}}/api/v1/products/1
+
+###
 # EJEMPLOS PARA COPIAR TOKEN MANUALMENTE
 ###
 

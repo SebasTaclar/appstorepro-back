@@ -1,5 +1,5 @@
 export interface WompiPaymentData {
-  wallpaperNumbers: number[];
+  externalReference: string; // Usar externalReference único en lugar de productIds
   buyerEmail: string;
   buyerName: string;
   buyerIdentificationNumber: string;
@@ -27,7 +27,7 @@ export interface WompiTransactionStatus {
   customer_email: string;
   payment_method?: {
     type: string;
-    extra?: any;
+    extra?: unknown;
   };
   created_at: string;
   finalized_at?: string;

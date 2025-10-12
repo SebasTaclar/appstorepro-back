@@ -25,25 +25,11 @@ const funcWebhookWompi = async (
     }
 
     // Extraer datos del webhook
-    const { event, data, signature } = req.body;
+    const { event, data } = req.body;
 
     if (!event || !data) {
       log.logWarning('Invalid webhook format', { event, data });
       return ApiResponseBuilder.badRequest('Invalid webhook format');
-    }
-
-    // Validar firma del webhook (opcional por ahora)
-    const wompiService = new WompiService();
-    if (signature) {
-      const isValidSignature = wompiService.validateWebhookSignature(
-        JSON.stringify(req.body),
-        signature
-      );
-
-      if (!isValidSignature) {
-        log.logWarning('Invalid webhook signature', { signature });
-        return ApiResponseBuilder.unauthorized('Invalid webhook signature');
-      }
     }
 
     log.logInfo('Wompi webhook validated', {
@@ -74,9 +60,9 @@ const funcWebhookWompi = async (
       { message: 'Webhook processed successfully' },
       'Webhook processed'
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     log.logError('Error processing Wompi webhook', {
-      error: error.message,
+      error: (error as Error).message,
       body: req.body,
     });
 

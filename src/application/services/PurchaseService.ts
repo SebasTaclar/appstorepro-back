@@ -5,6 +5,15 @@ import { IOrderDetailDataSource } from '../../domain/interfaces/IOrderDetailData
 import { IProductDataSource } from '../../domain/interfaces/IProductDataSource';
 import { ValidationError } from '../../shared/exceptions';
 
+// Función utilitaria para normalizar colores
+function normalizeColor(color: string): string {
+  return color
+    .trim()
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, ''); // Eliminar tildes y acentos
+}
+
 export interface CartItem {
   productId: number;
   quantity: number;
@@ -138,77 +147,112 @@ export class PurchaseService {
         itemCount: request.items.length,
       });
 
-      // 1. Validaciones básicas
+      // 1. Validaciones básicas (fuera de la transacción)
       this.validatePurchaseRequest(request);
 
-      // 2. Validar items y calcular total
+      // 2. Validar items y calcular total (fuera de la transacción)
       const validatedItems = await this.validateAndCalculateItems(request.items);
       const totalAmount = validatedItems.reduce((sum, item) => sum + item.totalPrice, 0);
 
-      // 3. Crear Purchase principal
-      const externalReference = `REF-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      // 3. Usar transacción de Prisma para garantizar integridad de datos
+      const result = await this.prisma.$transaction(async (prisma) => {
+        Logger.info('Starting database transaction for purchase creation');
 
-      const purchase = await this.prisma.purchase.create({
-        data: {
+        // 3.1. Crear Purchase principal
+        const externalReference = `REF-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+        const purchase = await prisma.purchase.create({
+          data: {
+            buyerEmail: request.buyerEmail,
+            buyerName: request.buyerName,
+            buyerIdentificationNumber: request.buyerIdentificationNumber,
+            buyerContactNumber: request.buyerContactNumber,
+            shippingAddress: request.shippingAddress,
+            status: 'PENDING',
+            orderStatus: 'PENDING',
+            amount: Math.round(totalAmount * 100), // Convertir a centavos
+            currency: 'COP',
+            paymentProvider: 'WOMPI',
+            externalReference: externalReference,
+            preferenceId: '', // Se actualizará después
+          },
+        });
+
+        Logger.info('Purchase created in transaction', { purchaseId: purchase.id });
+
+        // 3.2. Crear OrderDetails para cada item (dentro de la transacción)
+        const createdOrderDetails = [];
+        for (const item of validatedItems) {
+          const orderDetail = await prisma.orderDetail.create({
+            data: {
+              purchaseId: purchase.id,
+              productId: item.productId,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              totalPrice: item.totalPrice,
+              selectedColor: item.selectedColor,
+            },
+          });
+          createdOrderDetails.push(orderDetail);
+        }
+
+        Logger.info('OrderDetails created in transaction', {
+          count: createdOrderDetails.length,
+          purchaseId: purchase.id,
+        });
+
+        // 3.3. Crear transacción en Wompi (crítico: dentro de la transacción)
+        const wompiTransaction = await this.wompiService.createPayment({
+          externalReference: externalReference, // Usar el externalReference único generado
+          amount: totalAmount,
           buyerEmail: request.buyerEmail,
           buyerName: request.buyerName,
           buyerIdentificationNumber: request.buyerIdentificationNumber,
           buyerContactNumber: request.buyerContactNumber,
-          shippingAddress: request.shippingAddress,
-          status: 'PENDING',
-          orderStatus: 'PENDING',
-          amount: Math.round(totalAmount * 100), // Convertir a centavos
-          currency: 'COP',
-          paymentProvider: 'WOMPI',
-          externalReference: externalReference,
-          preferenceId: '', // Se actualizará después
-        },
-      });
-
-      // 4. Crear OrderDetails para cada item
-      for (const item of validatedItems) {
-        await this.orderDetailDataSource.create({
-          purchaseId: purchase.id,
-          productId: item.productId,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          totalPrice: item.totalPrice,
-          selectedColor: item.selectedColor,
         });
-      }
 
-      // 5. Crear transacción en Wompi (mantener estructura que ya funciona)
-      const wompiTransaction = await this.wompiService.createPayment({
-        wallpaperNumbers: validatedItems.map((item) => item.productId), // Mapear productIds como wallpaperNumbers para compatibilidad
-        amount: totalAmount,
-        buyerEmail: request.buyerEmail,
-        buyerName: request.buyerName,
-        buyerIdentificationNumber: request.buyerIdentificationNumber,
-        buyerContactNumber: request.buyerContactNumber,
-      });
-
-      // 6. Actualizar Purchase con datos de Wompi
-      await this.prisma.purchase.update({
-        where: { id: purchase.id },
-        data: {
-          preferenceId: wompiTransaction.transactionId,
+        Logger.info('Wompi transaction created in transaction', {
           wompiTransactionId: wompiTransaction.transactionId,
-        },
+          purchaseId: purchase.id,
+        });
+
+        // 3.4. Actualizar Purchase con datos de Wompi (dentro de la transacción)
+        const updatedPurchase = await prisma.purchase.update({
+          where: { id: purchase.id },
+          data: {
+            preferenceId: wompiTransaction.transactionId,
+            wompiTransactionId: wompiTransaction.transactionId,
+          },
+        });
+
+        Logger.info('Purchase updated with Wompi data in transaction', {
+          purchaseId: purchase.id,
+          wompiTransactionId: wompiTransaction.transactionId,
+        });
+
+        // 3.5. Retornar todos los datos necesarios para la respuesta
+        return {
+          purchase: updatedPurchase,
+          wompiTransaction,
+          validatedItems,
+          totalAmount,
+        };
       });
 
-      Logger.info('Purchase created successfully', {
-        purchaseId: purchase.id,
-        wompiTransactionId: wompiTransaction.transactionId,
-        totalAmount: totalAmount,
+      // 4. La transacción fue exitosa, construir respuesta
+      Logger.info('Purchase transaction completed successfully', {
+        purchaseId: result.purchase.id,
+        wompiTransactionId: result.wompiTransaction.transactionId,
+        totalAmount: result.totalAmount,
       });
 
       return {
         success: true,
-        purchaseId: purchase.id,
-        wompiTransactionId: wompiTransaction.transactionId,
-        paymentUrl: wompiTransaction.paymentUrl,
-        totalAmount: totalAmount,
-        items: validatedItems.map((item) => ({
+        purchaseId: result.purchase.id,
+        wompiTransactionId: result.wompiTransaction.transactionId,
+        paymentUrl: result.wompiTransaction.paymentUrl,
+        totalAmount: result.totalAmount,
+        items: result.validatedItems.map((item) => ({
           productId: item.productId,
           productName: item.product.name,
           quantity: item.quantity,
@@ -218,7 +262,7 @@ export class PurchaseService {
         })),
       };
     } catch (error) {
-      Logger.error('Error creating purchase', error);
+      Logger.error('Error creating purchase (transaction rolled back)', error);
       throw error;
     }
   }
@@ -273,11 +317,35 @@ export class PurchaseService {
 
       // Validar color si se especifica
       if (item.selectedColor) {
-        const colorsString = typeof product.colors === 'string' ? product.colors : '[]';
-        const availableColors = JSON.parse(colorsString);
-        if (!availableColors.includes(item.selectedColor)) {
+        Logger.info('Product available colors', { productColors: product.colors });
+
+        // Obtener colores disponibles del producto
+        let availableColors: string[] = [];
+        if (product.colors) {
+          if (typeof product.colors === 'string') {
+            try {
+              availableColors = JSON.parse(product.colors);
+            } catch {
+              // Si no es JSON válido, tratarlo como string único
+              availableColors = [product.colors];
+            }
+          } else if (Array.isArray(product.colors)) {
+            availableColors = product.colors;
+          }
+        }
+
+        Logger.info('Validating color selection', {
+          availableColors,
+          selectedColor: item.selectedColor,
+        });
+
+        // Normalizar tanto el color seleccionado como los disponibles para comparar
+        const normalizedSelectedColor = normalizeColor(item.selectedColor);
+        const normalizedAvailableColors = availableColors.map((color) => normalizeColor(color));
+
+        if (!normalizedAvailableColors.includes(normalizedSelectedColor)) {
           throw new ValidationError(
-            `Color ${item.selectedColor} not available for ${product.name}`
+            `Color ${item.selectedColor} not available for ${product.name}. Available colors: ${availableColors.join(', ')}`
           );
         }
       }

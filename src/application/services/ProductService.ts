@@ -4,6 +4,18 @@ import { IProductDataSource } from '../../domain/interfaces/IProductDataSource';
 import { ICategoryDataSource } from '../../domain/interfaces/ICategoryDataSource';
 import { Product } from '../../domain/entities/Product';
 
+// Función utilitaria para normalizar colores
+function normalizeColors(colors: string[]): string[] {
+  return colors.map(
+    (color) =>
+      color
+        .trim()
+        .toUpperCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '') // Eliminar tildes y acentos
+  );
+}
+
 export interface CreateProductRequest {
   name: string;
   description: string;
@@ -172,7 +184,7 @@ export class ProductService {
         images: createRequest.images,
         categoryId: createRequest.categoryId,
         status: createRequest.status || 'available',
-        colors: createRequest.colors,
+        colors: createRequest.colors ? normalizeColors(createRequest.colors) : undefined,
         isShowcase: createRequest.isShowcase || false,
         showcaseImage: createRequest.showcaseImage,
       };
@@ -239,7 +251,16 @@ export class ProductService {
         }
       }
 
-      const updatedProduct = await this.productDataSource.update(productId, updateRequest);
+      // Normalizar colores si se están actualizando
+      const normalizedUpdateRequest = { ...updateRequest };
+      if (updateRequest.colors) {
+        normalizedUpdateRequest.colors = normalizeColors(updateRequest.colors);
+      }
+
+      const updatedProduct = await this.productDataSource.update(
+        productId,
+        normalizedUpdateRequest
+      );
 
       if (!updatedProduct) {
         this.logger.logError(`Product update failed: product not found with id ${id}`);

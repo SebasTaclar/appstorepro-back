@@ -30,14 +30,13 @@ export class WompiService implements IWompiProvider {
   async createPayment(data: WompiPaymentData): Promise<WompiPaymentResult> {
     try {
       Logger.info('Generating Wompi Web Checkout URL', {
-        wallpaperNumbers: data.wallpaperNumbers,
+        externalReference: data.externalReference,
         buyerEmail: data.buyerEmail,
         amount: data.amount,
       });
 
-      // Crear referencia única
-      const wallpapersStr = data.wallpaperNumbers.join('-');
-      const reference = `wallpapers_${wallpapersStr}_${Date.now()}`;
+      // Usar el externalReference que viene como parámetro (ya es único)
+      const reference = data.externalReference;
 
       // Convertir monto a centavos (Wompi requiere centavos)
       const amountInCents = Math.round(data.amount * 100);
@@ -81,35 +80,19 @@ export class WompiService implements IWompiProvider {
         amountInCents: amountInCents,
         currency: 'COP',
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
       Logger.error('Error generating Wompi Web Checkout URL', {
-        error: error.message,
-        wallpaperNumbers: data.wallpaperNumbers,
+        error: (error as Error).message,
+        externalReference: data.externalReference,
         buyerEmail: data.buyerEmail,
       });
 
-      throw new Error(`Failed to generate Wompi Web Checkout URL: ${error.message}`);
-    }
-  }
-
-  // Método para validar webhook signature
-  validateWebhookSignature(payload: string, signature: string): boolean {
-    try {
-      // Implementar validación de firma cuando sea necesario
-      // const expectedSignature = crypto
-      //   .createHmac('sha256', this.integritySecret)
-      //   .update(payload)
-      //   .digest('hex');
-      // return signature === expectedSignature;
-      return true; // Por ahora retornamos true
-    } catch (error) {
-      Logger.error('Error validating Wompi webhook signature', { error });
-      return false;
+      throw new Error(`Failed to generate Wompi Web Checkout URL: ${(error as Error).message}`);
     }
   }
 
   // Método para consultar el estado de una transacción
-  async getTransactionStatus(transactionId: string): Promise<{ status: string; data: any }> {
+  async getTransactionStatus(transactionId: string): Promise<{ status: string; data: unknown }> {
     try {
       Logger.info('Querying Wompi transaction status', { transactionId });
 
@@ -152,11 +135,11 @@ export class WompiService implements IWompiProvider {
         status: responseData.data?.status || 'UNKNOWN',
         data: responseData,
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
       Logger.error('Error querying Wompi transaction status', {
         transactionId,
-        error: error.message,
-        stack: error.stack,
+        error: (error as Error).message,
+        stack: (error as Error).stack,
       });
       throw error;
     }
@@ -172,8 +155,10 @@ export class WompiService implements IWompiProvider {
       // Con fecha de expiración: referencia + monto + moneda + fechaExpiracion + secreto
       const concatenated = `${reference}${amountInCents}COP${expirationTime}${this.integritySecret}`;
       return crypto.createHash('sha256').update(concatenated).digest('hex');
-    } catch (error: any) {
-      Logger.error('Error generating signature with expiration', { error: error.message });
+    } catch (error: unknown) {
+      Logger.error('Error generating signature with expiration', {
+        error: (error as Error).message,
+      });
       throw error;
     }
   }

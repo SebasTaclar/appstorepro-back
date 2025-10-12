@@ -42,8 +42,11 @@ export class WompiPurchaseService {
     this.validatePurchaseRequest(request);
 
     // Crear el pago en Wompi (generar parámetros para el frontend)
+    // Generar externalReference único para esta compra
+    const externalReference = `REF-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
     const wompiPayment = await this.wompiService.createPayment({
-      wallpaperNumbers: request.wallpaperNumbers,
+      externalReference: externalReference,
       buyerEmail: request.buyerEmail,
       buyerName: request.buyerName,
       buyerIdentificationNumber: request.buyerIdentificationNumber,

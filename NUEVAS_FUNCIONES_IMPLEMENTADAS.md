@@ -4,7 +4,7 @@
 
 **Propósito**: Sistema de pagos modernizado basado en productos y carrito de compras con integración exclusiva a Wompi.
 
-**Endpoint**: `POST /api/funcCreatePayment`
+**Endpoint**: `POST /api/v1/payment/create`
 **Headers**: `Content-Type: application/json`
 
 **Body de ejemplo**:

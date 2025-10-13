@@ -2,8 +2,6 @@ import { Context, HttpRequest } from '@azure/functions';
 import { Logger } from '../src/shared/Logger';
 import { withApiHandler } from '../src/shared/apiHandler';
 import { ApiResponseBuilder } from '../src/shared/ApiResponse';
-import { WompiPurchaseService } from '../src/application/services/WompiPurchaseService';
-import { WompiService } from '../src/infrastructure/services/WompiService';
 import { getPrismaClient } from '../src/config/PrismaClient';
 import { getEmailService } from '../src/shared/serviceProvider';
 
@@ -101,9 +99,8 @@ async function handleTransactionUpdated(data: any, log: Logger): Promise<void> {
 
     // Actualizar el estado de la compra usando la referencia
     const prismaClient = getPrismaClient();
-    const wompiPurchaseService = new WompiPurchaseService(prismaClient);
 
-    await wompiPurchaseService.updatePurchaseStatusByReference(transaction.reference, mappedStatus);
+    await updatePurchaseStatusByReference(transaction.reference, mappedStatus, log);
 
     // También actualizar el wompiTransactionId si no lo tenemos
     await updateWompiTransactionId(transaction.reference, transaction.id, log);
@@ -160,10 +157,9 @@ async function handlePaymentLinkPaid(data: any, log: Logger): Promise<void> {
 
     // Actualizar el estado de la compra usando el ID del payment link
     const prismaClient = getPrismaClient();
-    const wompiPurchaseService = new WompiPurchaseService(prismaClient);
 
     // Actualizar usando el ID del payment link (que guardamos como transactionId)
-    await wompiPurchaseService.updatePurchaseStatusByReference(paymentLink.reference, 'COMPLETED');
+    await updatePurchaseStatusByReference(paymentLink.reference, 'COMPLETED', log);
 
     log.logInfo('Payment link paid processed successfully', {
       paymentLinkId: paymentLink.id,
@@ -194,9 +190,8 @@ async function handlePaymentLinkExpired(data: any, log: Logger): Promise<void> {
 
     // Actualizar el estado de la compra usando la referencia
     const prismaClient = getPrismaClient();
-    const wompiPurchaseService = new WompiPurchaseService(prismaClient);
 
-    await wompiPurchaseService.updatePurchaseStatusByReference(paymentLink.reference, 'CANCELLED');
+    await updatePurchaseStatusByReference(paymentLink.reference, 'CANCELLED', log);
 
     log.logInfo('Payment link expired processed successfully', {
       paymentLinkId: paymentLink.id,
@@ -206,6 +201,48 @@ async function handlePaymentLinkExpired(data: any, log: Logger): Promise<void> {
     log.logError('Error handling payment link expired', {
       error: error.message,
       paymentLinkId: data.payment_link?.id,
+    });
+    throw error;
+  }
+}
+
+// Función para actualizar estado de compra por referencia
+async function updatePurchaseStatusByReference(
+  reference: string,
+  status: string,
+  log: Logger
+): Promise<void> {
+  try {
+    log.logInfo('Updating purchase status by reference', { reference, status });
+
+    const prismaClient = getPrismaClient();
+
+    // Actualizar el estado en la base de datos usando la referencia externa
+    const updateResult = await prismaClient.purchase.updateMany({
+      where: {
+        externalReference: reference,
+        paymentProvider: 'WOMPI',
+      },
+      data: {
+        status: status,
+        updatedAt: new Date(),
+      },
+    });
+
+    if (updateResult.count === 0) {
+      log.logWarning('No purchase found for reference', { reference });
+    } else {
+      log.logInfo('Purchase status updated successfully', {
+        reference,
+        newStatus: status,
+        updatedCount: updateResult.count,
+      });
+    }
+  } catch (error: any) {
+    log.logError('Error updating purchase status by reference', {
+      reference,
+      status,
+      error: error.message,
     });
     throw error;
   }

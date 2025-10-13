@@ -231,12 +231,7 @@ export class EmailService {
 
       // Buscar la compra por payment ID o external reference
       const purchases = await purchaseService.getAllPurchases();
-      const purchase = purchases.find(
-        (p) =>
-          p.mercadopagoPaymentId === paymentWebhookData.id ||
-          (paymentWebhookData.externalReference &&
-            paymentWebhookData.externalReference.includes(p.wallpaperNumbers.join('-')))
-      );
+      const purchase = purchases.find((p) => p.mercadopagoPaymentId === paymentWebhookData.id);
 
       if (!purchase) {
         this.logger.logWarning('Purchase not found for payment notification email', {
@@ -265,7 +260,6 @@ export class EmailService {
       this.logger.logInfo('Payment notification email sent successfully from webhook', {
         buyerEmail: purchase.buyerEmail,
         status: mappedStatus,
-        wallpaperNumbers: purchase.wallpaperNumbers,
       });
     } catch (error) {
       this.logger.logError('Error in sendPaymentNotificationFromWebhook', error);

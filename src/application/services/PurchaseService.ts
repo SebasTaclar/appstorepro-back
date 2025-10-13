@@ -73,7 +73,6 @@ interface FormattedPurchase {
   amount: number;
   currency: string;
   mercadopagoPaymentId?: string;
-  wallpaperNumbers?: number[]; // Para compatibilidad con código existente
   items: Array<{
     productId: number;
     productName: string;
@@ -539,11 +538,6 @@ export class PurchaseService {
     }
   }
 
-  async getWallpaperStatus(): Promise<{ approved: number[]; pending: number[] }> {
-    // Mantener para compatibilidad, pero puede devolver vacío
-    return { approved: [], pending: [] };
-  }
-
   async generateBackupData(logger: Logger): Promise<BackupData> {
     try {
       logger.logInfo('Generating backup data');
@@ -759,7 +753,6 @@ export class PurchaseService {
         amount: updatedPurchase.amount,
         currency: updatedPurchase.currency,
         mercadopagoPaymentId: updatedPurchase.mercadopagoPaymentId,
-        wallpaperNumbers: updatedPurchase.orderDetails.map((detail) => detail.productId), // Para compatibilidad
         items: updatedPurchase.orderDetails.map((detail) => ({
           productId: detail.productId,
           productName: detail.product?.name || 'Unknown Product',

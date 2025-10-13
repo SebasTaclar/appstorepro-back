@@ -170,7 +170,7 @@ export class PurchaseService {
             shippingAddress: request.shippingAddress,
             status: 'PENDING',
             orderStatus: 'PENDING',
-            amount: Math.round(totalAmount * 100), // Convertir a centavos
+            amount: Math.round(totalAmount), // Guardar en pesos, no en centavos
             currency: 'COP',
             paymentProvider: 'WOMPI',
             externalReference: externalReference,

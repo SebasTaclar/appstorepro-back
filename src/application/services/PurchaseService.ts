@@ -39,7 +39,6 @@ export interface CreatePurchaseResponse {
   paymentUrl: string;
   totalAmount: number;
   items: {
-    productId: number;
     productName: string;
     quantity: number;
     unitPrice: number;
@@ -74,7 +73,6 @@ interface FormattedPurchase {
   currency: string;
   mercadopagoPaymentId?: string;
   items: Array<{
-    productId: number;
     productName: string;
     quantity: number;
     unitPrice: number;
@@ -185,7 +183,7 @@ export class PurchaseService {
           const orderDetail = await prisma.orderDetail.create({
             data: {
               purchaseId: purchase.id,
-              productId: item.productId,
+              productName: item.product.name, // Guardar el nombre del producto
               quantity: item.quantity,
               unitPrice: item.unitPrice,
               totalPrice: item.totalPrice,
@@ -252,7 +250,6 @@ export class PurchaseService {
         paymentUrl: result.wompiTransaction.paymentUrl,
         totalAmount: result.totalAmount,
         items: result.validatedItems.map((item) => ({
-          productId: item.productId,
           productName: item.product.name,
           quantity: item.quantity,
           unitPrice: item.unitPrice,
@@ -428,19 +425,7 @@ export class PurchaseService {
       const purchases = await this.prisma.purchase.findMany({
         where: { buyerEmail: email },
         include: {
-          orderDetails: {
-            include: {
-              product: {
-                select: {
-                  id: true,
-                  name: true,
-                  description: true,
-                  images: true,
-                  categoryId: true,
-                },
-              },
-            },
-          },
+          orderDetails: true,
         },
         orderBy: { updatedAt: 'desc' },
       });
@@ -455,10 +440,9 @@ export class PurchaseService {
         amount: purchase.amount,
         currency: purchase.currency,
         mercadopagoPaymentId: purchase.mercadopagoPaymentId,
-        wallpaperNumbers: purchase.orderDetails.map((detail) => detail.productId), // Para compatibilidad
+        wallpaperNumbers: purchase.orderDetails.map((detail) => detail.productName), // Para compatibilidad (ahora nombres)
         items: purchase.orderDetails.map((detail) => ({
-          productId: detail.productId,
-          productName: detail.product?.name || 'Unknown Product',
+          productName: detail.productName,
           quantity: detail.quantity,
           unitPrice: Number(detail.unitPrice),
           totalPrice: Number(detail.totalPrice),
@@ -487,19 +471,7 @@ export class PurchaseService {
 
       const purchases = await this.prisma.purchase.findMany({
         include: {
-          orderDetails: {
-            include: {
-              product: {
-                select: {
-                  id: true,
-                  name: true,
-                  description: true,
-                  images: true,
-                  categoryId: true,
-                },
-              },
-            },
-          },
+          orderDetails: true,
         },
         orderBy: { updatedAt: 'desc' },
       });
@@ -514,10 +486,9 @@ export class PurchaseService {
         amount: purchase.amount,
         currency: purchase.currency,
         mercadopagoPaymentId: purchase.mercadopagoPaymentId,
-        wallpaperNumbers: purchase.orderDetails.map((detail) => detail.productId), // Para compatibilidad
+        wallpaperNumbers: purchase.orderDetails.map((detail) => detail.productName), // Para compatibilidad
         items: purchase.orderDetails.map((detail) => ({
-          productId: detail.productId,
-          productName: detail.product?.name || 'Unknown Product',
+          productName: detail.productName,
           quantity: detail.quantity,
           unitPrice: Number(detail.unitPrice),
           totalPrice: Number(detail.totalPrice),
@@ -544,11 +515,7 @@ export class PurchaseService {
 
       const purchases = await this.prisma.purchase.findMany({
         include: {
-          orderDetails: {
-            include: {
-              product: true,
-            },
-          },
+          orderDetails: true,
         },
         orderBy: { createdAt: 'desc' },
       });
@@ -565,7 +532,7 @@ export class PurchaseService {
         uniqueProductsSold: 0,
       };
 
-      const soldProducts = new Set<number>();
+      const soldProducts = new Set<string>();
 
       for (const purchase of purchases) {
         const status = purchase.status.toUpperCase();
@@ -573,12 +540,12 @@ export class PurchaseService {
           case 'APPROVED':
             statistics.approvedCount++;
             statistics.totalRevenue += purchase.amount;
-            purchase.orderDetails.forEach((detail) => soldProducts.add(detail.productId));
+            purchase.orderDetails.forEach((detail) => soldProducts.add(detail.productName));
             break;
           case 'COMPLETED':
             statistics.completedCount++;
             statistics.totalRevenue += purchase.amount;
-            purchase.orderDetails.forEach((detail) => soldProducts.add(detail.productId));
+            purchase.orderDetails.forEach((detail) => soldProducts.add(detail.productName));
             break;
           case 'PENDING':
             statistics.pendingCount++;
@@ -607,10 +574,9 @@ export class PurchaseService {
         amount: purchase.amount,
         currency: purchase.currency,
         mercadopagoPaymentId: purchase.mercadopagoPaymentId,
-        wallpaperNumbers: purchase.orderDetails.map((detail) => detail.productId), // Para compatibilidad
+        wallpaperNumbers: purchase.orderDetails.map((detail) => detail.productName), // Para compatibilidad
         items: purchase.orderDetails.map((detail) => ({
-          productId: detail.productId,
-          productName: detail.product?.name || 'Unknown',
+          productName: detail.productName,
           quantity: detail.quantity,
           unitPrice: Number(detail.unitPrice),
           totalPrice: Number(detail.totalPrice),
@@ -641,11 +607,7 @@ export class PurchaseService {
       const purchase = await this.prisma.purchase.findUnique({
         where: { id: parseInt(purchaseId) },
         include: {
-          orderDetails: {
-            include: {
-              product: true,
-            },
-          },
+          orderDetails: true,
         },
       });
 
@@ -665,7 +627,7 @@ export class PurchaseService {
         buyerName: purchase.buyerName,
         buyerContactNumber: purchase.buyerContactNumber || 'No proporcionado',
         items: purchase.orderDetails.map((detail) => ({
-          productName: detail.product?.name || 'Unknown Product',
+          productName: detail.productName,
           quantity: detail.quantity,
           unitPrice: Number(detail.unitPrice),
           totalPrice: Number(detail.totalPrice),
@@ -702,11 +664,7 @@ export class PurchaseService {
       const purchase = await this.prisma.purchase.findUnique({
         where: { id: parseInt(purchaseId) },
         include: {
-          orderDetails: {
-            include: {
-              product: true,
-            },
-          },
+          orderDetails: true,
         },
       });
 
@@ -735,11 +693,7 @@ export class PurchaseService {
         where: { id: purchase.id },
         data: dataToUpdate,
         include: {
-          orderDetails: {
-            include: {
-              product: true,
-            },
-          },
+          orderDetails: true,
         },
       });
 
@@ -754,8 +708,7 @@ export class PurchaseService {
         currency: updatedPurchase.currency,
         mercadopagoPaymentId: updatedPurchase.mercadopagoPaymentId,
         items: updatedPurchase.orderDetails.map((detail) => ({
-          productId: detail.productId,
-          productName: detail.product?.name || 'Unknown Product',
+          productName: detail.productName,
           quantity: detail.quantity,
           unitPrice: Number(detail.unitPrice),
           totalPrice: Number(detail.totalPrice),

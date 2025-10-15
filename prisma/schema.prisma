@@ -54,7 +54,7 @@ model Purchase {
 model OrderDetail {
   id            Int     @id @default(autoincrement())
   purchaseId    Int     @map("purchase_id")
-  productId     Int     @map("product_id")
+  productName   String  @map("product_name") // Nombre del producto (desnormalizado)
   quantity      Int     @default(1)
   unitPrice     Decimal @db.Decimal(10, 2) @map("unit_price") // Snapshot del precio al momento de compra
   totalPrice    Decimal @db.Decimal(10, 2) @map("total_price") // quantity * unitPrice
@@ -62,7 +62,6 @@ model OrderDetail {
   
   // Relaciones
   purchase      Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
-  product       Product  @relation(fields: [productId], references: [id])
   
   @@map("order_details")
 }
@@ -97,7 +96,6 @@ model Product {
 
   // Relaciones
   category     Category      @relation(fields: [categoryId], references: [id])
-  orderDetails OrderDetail[] // Nueva relación con order details
 
   @@index([categoryId], map: "idx_products_category")
   @@index([isShowcase], map: "idx_products_showcase")

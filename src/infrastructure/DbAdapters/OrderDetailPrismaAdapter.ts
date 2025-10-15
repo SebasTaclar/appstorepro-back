@@ -1,22 +1,7 @@
-import { getPrismaClient } from '../../config/PrismaClient';
+﻿import { getPrismaClient } from '../../config/PrismaClient';
 import { IOrderDetailDataSource } from '../../domain/interfaces/IOrderDetailDataSource';
 import { OrderDetail } from '../../domain/entities/OrderDetail';
 import { Prisma } from '@prisma/client';
-
-// Tipo para el resultado de Prisma con include
-type PrismaOrderDetailWithProduct = Prisma.OrderDetailGetPayload<{
-  include: {
-    product: {
-      select: {
-        id: true;
-        name: true;
-        description: true;
-        images: true;
-        categoryId: true;
-      };
-    };
-  };
-}>;
 
 export class OrderDetailPrismaAdapter implements IOrderDetailDataSource {
   private readonly prisma = getPrismaClient();
@@ -25,22 +10,11 @@ export class OrderDetailPrismaAdapter implements IOrderDetailDataSource {
     const newOrderDetail = await this.prisma.orderDetail.create({
       data: {
         purchaseId: orderDetail.purchaseId,
-        productId: orderDetail.productId,
+        productName: orderDetail.productName,
         quantity: orderDetail.quantity,
         unitPrice: orderDetail.unitPrice,
         totalPrice: orderDetail.totalPrice,
         selectedColor: orderDetail.selectedColor,
-      },
-      include: {
-        product: {
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            images: true,
-            categoryId: true,
-          },
-        },
       },
     });
 
@@ -50,17 +24,6 @@ export class OrderDetailPrismaAdapter implements IOrderDetailDataSource {
   public async getByPurchaseId(purchaseId: number): Promise<OrderDetail[]> {
     const orderDetails = await this.prisma.orderDetail.findMany({
       where: { purchaseId },
-      include: {
-        product: {
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            images: true,
-            categoryId: true,
-          },
-        },
-      },
       orderBy: { id: 'asc' },
     });
 
@@ -70,17 +33,6 @@ export class OrderDetailPrismaAdapter implements IOrderDetailDataSource {
   public async getById(id: number): Promise<OrderDetail | null> {
     const orderDetail = await this.prisma.orderDetail.findUnique({
       where: { id },
-      include: {
-        product: {
-          select: {
-            id: true,
-            name: true,
-            description: true,
-            images: true,
-            categoryId: true,
-          },
-        },
-      },
     });
 
     return orderDetail ? this.mapToOrderDetail(orderDetail) : null;
@@ -97,26 +49,14 @@ export class OrderDetailPrismaAdapter implements IOrderDetailDataSource {
           ...(orderDetail.selectedColor !== undefined && {
             selectedColor: orderDetail.selectedColor,
           }),
-        },
-        include: {
-          product: {
-            select: {
-              id: true,
-              name: true,
-              description: true,
-              images: true,
-              categoryId: true,
-            },
-          },
+          ...(orderDetail.productName !== undefined && { productName: orderDetail.productName }),
         },
       });
 
       return this.mapToOrderDetail(updatedOrderDetail);
     } catch (error) {
-      // Solo manejamos el caso específico de "registro no encontrado"
-      // Otros errores se propagan al middleware
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
-        return null; // OrderDetail not found
+        return null;
       }
       throw error;
     }
@@ -129,33 +69,22 @@ export class OrderDetailPrismaAdapter implements IOrderDetailDataSource {
       });
       return true;
     } catch (error) {
-      // Solo manejamos el caso específico de "registro no encontrado"
-      // Otros errores se propagan al middleware
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
-        return false; // OrderDetail not found
+        return false;
       }
       throw error;
     }
   }
 
-  private mapToOrderDetail(prismaOrderDetail: PrismaOrderDetailWithProduct): OrderDetail {
+  private mapToOrderDetail(prismaOrderDetail: any): OrderDetail {
     return {
       id: prismaOrderDetail.id,
       purchaseId: prismaOrderDetail.purchaseId,
-      productId: prismaOrderDetail.productId,
+      productName: prismaOrderDetail.productName,
       quantity: prismaOrderDetail.quantity,
       unitPrice: parseFloat(prismaOrderDetail.unitPrice.toString()),
       totalPrice: parseFloat(prismaOrderDetail.totalPrice.toString()),
       selectedColor: prismaOrderDetail.selectedColor,
-      product: prismaOrderDetail.product
-        ? {
-            id: prismaOrderDetail.product.id,
-            name: prismaOrderDetail.product.name,
-            description: prismaOrderDetail.product.description,
-            images: JSON.parse(prismaOrderDetail.product.images),
-            categoryId: prismaOrderDetail.product.categoryId,
-          }
-        : undefined,
     };
   }
 }
